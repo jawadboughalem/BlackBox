@@ -1,12 +1,14 @@
 import { resolve } from "node:path";
 import { parseArgs, type ParsedArgs } from "./args.js";
 import { HELP_TEXT } from "./help.js";
+import { runProxy } from "./proxy.js";
 import { readVersion } from "./version.js";
 
-/** Sinks and ambient state the CLI needs, injectable so tests stay hermetic. */
+/** Streams and ambient state the CLI needs, injectable so tests stay hermetic. */
 export interface CliContext {
-  out: (text: string) => void;
-  err: (text: string) => void;
+  stdin: NodeJS.ReadableStream;
+  stdout: NodeJS.WritableStream;
+  stderr: NodeJS.WritableStream;
   cwd: string;
   version: string;
 }
@@ -16,29 +18,30 @@ export const EXIT_USAGE = 2;
 
 export function defaultContext(): CliContext {
   return {
-    out: (text) => process.stdout.write(`${text}\n`),
-    err: (text) => process.stderr.write(`${text}\n`),
+    stdin: process.stdin,
+    stdout: process.stdout,
+    stderr: process.stderr,
     cwd: process.cwd(),
     version: readVersion(),
   };
 }
 
 /**
- * Runs the CLI for the given arguments and returns the process exit code.
+ * Runs the CLI for the given arguments and resolves with the process exit code.
  *
- * Every subcommand is still a stub: it reports the input it would act on
- * instead of doing the work.
+ * `verify` and `summary` are still stubs that report the input they would act
+ * on; proxy mode is live.
  */
 export function runCli(
   argv: readonly string[],
   context: CliContext = defaultContext(),
-): number {
-  const parsed = parseArgs(argv);
-  return dispatch(parsed, context);
+): Promise<number> {
+  return dispatch(parseArgs(argv), context);
 }
 
-function dispatch(parsed: ParsedArgs, context: CliContext): number {
-  const { out, err } = context;
+async function dispatch(parsed: ParsedArgs, context: CliContext): Promise<number> {
+  const out = (text: string) => context.stdout.write(`${text}\n`);
+  const err = (text: string) => context.stderr.write(`${text}\n`);
 
   switch (parsed.kind) {
     case "help":
@@ -49,12 +52,14 @@ function dispatch(parsed: ParsedArgs, context: CliContext): number {
       out(context.version);
       return 0;
 
+    // Deliberately silent: in proxy mode stdout carries the child's protocol
+    // traffic and nothing else.
     case "proxy":
-      out("mode: proxy");
-      out(`command: ${parsed.command}`);
-      out(`args: ${formatArgs(parsed.args)}`);
-      out("(not implemented yet — the server would be launched through the proxy)");
-      return 0;
+      return runProxy(parsed.command, parsed.args, {
+        stdin: context.stdin,
+        stdout: context.stdout,
+        stderr: context.stderr,
+      });
 
     case "verify":
     case "summary":
@@ -70,10 +75,4 @@ function dispatch(parsed: ParsedArgs, context: CliContext): number {
       err(HELP_TEXT.trimEnd());
       return EXIT_USAGE;
   }
-}
-
-/** Renders an argument list readably, making empty entries visible. */
-function formatArgs(args: readonly string[]): string {
-  if (args.length === 0) return "(none)";
-  return args.map((arg) => JSON.stringify(arg)).join(" ");
 }

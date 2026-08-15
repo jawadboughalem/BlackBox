@@ -2,8 +2,9 @@
 
 CLI to proxy, verify and summarize MCP server sessions.
 
-> Early scaffold: argument parsing is complete and tested, but every subcommand
-> is still a stub that reports the input it would act on.
+> Work in progress: proxy mode is live and relays a real MCP server
+> transparently. `verify` and `summary` are still stubs that report the input
+> they would act on, and nothing is recorded yet.
 
 ## Requirements
 
@@ -19,11 +20,21 @@ mcp-blackbox --help                          Show help
 mcp-blackbox --version                       Show the version
 ```
 
+## Proxy mode
+
 Everything after `--` is passed to the server verbatim, flags included:
 
 ```bash
 mcp-blackbox -- npx -y @modelcontextprotocol/server-filesystem /tmp
 ```
+
+The server runs as a child process and the proxy relays stdio around it:
+parent stdin to the child, the child's stdout back out framed into `\n`
+terminated lines, and the child's stderr straight through. The relay is
+byte-transparent — a line that is not valid JSON is forwarded exactly as it
+arrived — and stdout carries nothing but relayed traffic. The child's exit code
+is propagated, and `SIGINT`/`SIGTERM` are forwarded to it before the proxy
+exits.
 
 `verify` and `summary` take an optional path and default to the current
 directory:
