@@ -180,7 +180,7 @@ describe("mechanism 3: truncation", () => {
   const long = "a".repeat(DEFAULT_MAX_STRING_LENGTH + 1);
 
   it("replaces a string longer than 500 characters", () => {
-    expect(scrub(long)).toBe(`<tronqué:${sha256(long)}>`);
+    expect(scrub(long)).toBe(`<truncated:${sha256(long)}>`);
   });
 
   it("keeps a string of exactly 500 characters", () => {
@@ -202,12 +202,12 @@ describe("mechanism 3: truncation", () => {
   // value cannot leak through a span the patterns happened not to match.
   it("takes precedence over pattern matching", () => {
     const withEmail = `jo@example.com ${"z".repeat(600)}`;
-    expect(scrub(withEmail)).toBe(`<tronqué:${sha256(withEmail)}>`);
+    expect(scrub(withEmail)).toBe(`<truncated:${sha256(withEmail)}>`);
   });
 
   it("truncates long strings nested in structures", () => {
     const result = redact({ body: long }) as Record<string, unknown>;
-    expect(result["body"]).toBe(`<tronqué:${sha256(long)}>`);
+    expect(result["body"]).toBe(`<truncated:${sha256(long)}>`);
   });
 });
 
@@ -238,7 +238,7 @@ describe("redact", () => {
 
   it("respects a custom maximum length", () => {
     const config = { ...defaultConfig(), maxStringLength: 5 };
-    expect(redactString("123456", config)).toBe(`<tronqué:${sha256("123456")}>`);
+    expect(redactString("123456", config)).toBe(`<truncated:${sha256("123456")}>`);
     expect(redactString("12345", config)).toBe("12345");
   });
 });

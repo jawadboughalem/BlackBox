@@ -86,12 +86,12 @@ describe("verifyChain — intact journals", () => {
 
   it("reports OK in the expected form", () => {
     const { path } = buildJournal(42);
-    expect(formatVerify(verify(path))).toBe("OK — 42 entrées, chaîne intacte");
+    expect(formatVerify(verify(path))).toBe("OK — 42 entries, chain intact");
   });
 
   it("uses the singular for one entry", () => {
     const { path } = buildJournal(1);
-    expect(formatVerify(verify(path))).toBe("OK — 1 entrée, chaîne intacte");
+    expect(formatVerify(verify(path))).toBe("OK — 1 entry, chain intact");
   });
 });
 
@@ -104,7 +104,7 @@ describe("verifyChain — tampered journals", () => {
 
     const result = verify(path);
     expect(result).toMatchObject({ ok: false, index: 3, seq: 3, verified: 2 });
-    expect(result.ok === false && result.reason).toContain("hash recalculé");
+    expect(result.ok === false && result.reason).toContain("recomputed hash");
   });
 
   it("catches an edited argument, even a redacted one", () => {
@@ -137,7 +137,7 @@ describe("verifyChain — tampered journals", () => {
 
     const result = verify(path);
     expect(result).toMatchObject({ ok: false, index: 3 });
-    expect(result.ok === false && result.reason).toContain("seq attendu 3, trouvé 4");
+    expect(result.ok === false && result.reason).toContain("expected seq 3, found 4");
   });
 
   it("catches a duplicated entry", () => {
@@ -185,7 +185,7 @@ describe("verifyChain — tampered journals", () => {
 
     const result = verify(path);
     expect(result).toMatchObject({ ok: false, index: 4, seq: null });
-    expect(result.ok === false && result.reason).toContain("JSON invalide");
+    expect(result.ok === false && result.reason).toContain("not valid JSON");
   });
 
   it("catches an entry missing a required field", () => {
@@ -223,9 +223,9 @@ describe("verifyChain — tampered journals", () => {
     writeEntries(path, entries);
 
     const text = formatVerify(verify(path));
-    expect(text).toContain("ROMPUE à l'entrée 2 (seq 2)");
+    expect(text).toContain("BROKEN at entry 2 (seq 2)");
     expect(text).toContain(`${path}:2`);
-    expect(text).toContain("1 entrée vérifiée avant la rupture");
+    expect(text).toContain("1 entry verified before the break");
   });
 
   it("keeps the genesis hash as the anchor", () => {

@@ -135,7 +135,7 @@ describe("summarise", () => {
   it("skips unreadable lines instead of failing", () => {
     const lines: JournalLine[] = [
       { line: 1, entry: entry(), problem: null },
-      { line: 2, entry: null, problem: "JSON invalide" },
+      { line: 2, entry: null, problem: "not valid JSON" },
       { line: 3, entry: entry({ outcome: "error" }), problem: null },
     ];
     const summary = summarise(lines, "/tmp/journal.jsonl");
@@ -159,28 +159,28 @@ describe("formatSummary", () => {
     const text = formatSummary(summary);
 
     expect(text).toContain("2026-03-01T09:00:00.000Z → 2026-03-01T10:00:00.000Z");
-    expect(text).toContain("Appels    2 (1 en échec, 50.0 %)");
+    expect(text).toContain("Calls     2 (1 failed, 50.0%)");
     // Nearest rank over [10, 90]: the median is the lower sample, not the mean.
-    expect(text).toContain("médiane 10 ms · p95 90 ms");
-    expect(text).toContain("Par outil");
-    expect(text).toContain("Par serveur");
+    expect(text).toContain("median 10 ms · p95 90 ms");
+    expect(text).toContain("By tool");
+    expect(text).toContain("By server");
     expect(text).toContain("read");
     expect(text).toContain("write");
   });
 
   it("says so when nothing was recorded", () => {
-    expect(formatSummary(summaryOf([]))).toContain("Aucun appel enregistré.");
+    expect(formatSummary(summaryOf([]))).toContain("No calls recorded.");
   });
 
   it("mentions skipped lines", () => {
     const summary = summarise(
       [
         { line: 1, entry: entry(), problem: null },
-        { line: 2, entry: null, problem: "JSON invalide" },
+        { line: 2, entry: null, problem: "not valid JSON" },
       ],
       "/tmp/journal.jsonl",
     );
-    expect(formatSummary(summary)).toContain("1 ligne(s) illisible(s)");
+    expect(formatSummary(summary)).toContain("1 unreadable line(s)");
   });
 
   it("names the journal it read", () => {

@@ -153,7 +153,7 @@ describe.skipIf(!existsSync(CLI))("recording", () => {
     expect(redacted["api_key"]).toBe(REDACTED);
     expect(redacted["contact"]).toBe("[redacted:email]");
     expect(redacted["card"]).toBe("[redacted:card]");
-    expect(redacted["body"]).toBe(`<tronqué:${sha256("z".repeat(600))}>`);
+    expect(redacted["body"]).toBe(`<truncated:${sha256("z".repeat(600))}>`);
 
     const serialised = JSON.stringify(redacted);
     expect(serialised).not.toContain("sk-abcdefghij");

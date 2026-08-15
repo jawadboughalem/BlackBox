@@ -139,7 +139,7 @@ export function redactString(text: string, config: RedactionConfig = defaultConf
   // Length wins over pattern matching: replacing the whole string means an
   // over-long value cannot leak through a span the patterns did not cover.
   if (text.length > config.maxStringLength) {
-    return `<tronqué:${sha256(text)}>`;
+    return `<truncated:${sha256(text)}>`;
   }
 
   let result = text;

@@ -13,7 +13,7 @@ export interface JournalLine {
 
 export class JournalNotFoundError extends Error {
   constructor(readonly path: string) {
-    super(`aucun journal à ${path}`);
+    super(`no journal at ${path}`);
     this.name = "JournalNotFoundError";
   }
 }
@@ -57,7 +57,7 @@ export function readJournalLines(path: string): JournalLine[] {
     try {
       parsed = JSON.parse(raw);
     } catch {
-      lines.push({ line: index + 1, entry: null, problem: "JSON invalide" });
+      lines.push({ line: index + 1, entry: null, problem: "not valid JSON" });
       return;
     }
 
@@ -88,7 +88,7 @@ const REQUIRED: ReadonlyArray<[keyof JournalEntry, string]> = [
 /** Returns null when the value is a usable entry, or why it is not. */
 function describeShape(value: unknown): string | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    return "objet JSON attendu";
+    return "not a JSON object";
   }
 
   const record = value as Record<string, unknown>;
@@ -96,11 +96,11 @@ function describeShape(value: unknown): string | null {
   for (const [field, type] of REQUIRED) {
     if (typeof record[field] !== type) missing.push(String(field));
   }
-  if (missing.length > 0) return `champ absent ou invalide : ${missing.join(", ")}`;
+  if (missing.length > 0) return `missing or malformed field: ${missing.join(", ")}`;
 
   const outcome = record["outcome"];
   if (outcome !== "ok" && outcome !== "error") {
-    return `outcome doit valoir "ok" ou "error", trouvé ${JSON.stringify(outcome)}`;
+    return `outcome must be "ok" or "error", got ${JSON.stringify(outcome)}`;
   }
 
   return null;

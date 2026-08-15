@@ -45,7 +45,7 @@ export function verifyChain(lines: readonly JournalLine[], path: string): Verify
         index,
         line: line.line,
         seq: null,
-        reason: line.problem ?? "entrée illisible",
+        reason: line.problem ?? "unreadable entry",
         verified: offset,
       };
     }
@@ -62,21 +62,21 @@ export function verifyChain(lines: readonly JournalLine[], path: string): Verify
     });
 
     if (entry.seq !== index) {
-      return broken(`seq attendu ${index}, trouvé ${entry.seq}`);
+      return broken(`expected seq ${index}, found ${entry.seq}`);
     }
 
     if (entry.prev_hash !== previous) {
       return broken(
         offset === 0
-          ? "la première entrée doit partir du hash genesis"
-          : "prev_hash ne correspond pas à l'entrée précédente",
+          ? "first entry must start from the genesis hash"
+          : "prev_hash does not match the previous entry",
       );
     }
 
     const { hash, ...rest } = entry;
     const recomputed = computeEntryHash(rest);
     if (recomputed !== hash) {
-      return broken("hash recalculé différent : l'entrée a été modifiée");
+      return broken("recomputed hash does not match: the entry was modified");
     }
 
     previous = hash;
@@ -88,17 +88,17 @@ export function verifyChain(lines: readonly JournalLine[], path: string): Verify
 /** Renders the result the way the CLI prints it. */
 export function formatVerify(result: VerifyResult): string {
   if (result.ok) {
-    return `OK — ${result.entries} ${plural(result.entries)}, chaîne intacte`;
+    return `OK — ${result.entries} ${plural(result.entries)}, chain intact`;
   }
 
-  const seq = result.seq === null ? "illisible" : `seq ${result.seq}`;
+  const seq = result.seq === null ? "unreadable" : `seq ${result.seq}`;
   return [
-    `ROMPUE à l'entrée ${result.index} (${seq}) — ${result.reason}`,
-    `  fichier : ${result.path}:${result.line}`,
-    `  ${result.verified} ${plural(result.verified)} vérifiée${result.verified === 1 ? "" : "s"} avant la rupture`,
+    `BROKEN at entry ${result.index} (${seq}) — ${result.reason}`,
+    `  file: ${result.path}:${result.line}`,
+    `  ${result.verified} ${plural(result.verified)} verified before the break`,
   ].join("\n");
 }
 
 function plural(count: number): string {
-  return count === 1 ? "entrée" : "entrées";
+  return count === 1 ? "entry" : "entries";
 }

@@ -71,14 +71,14 @@ describe.skipIf(!existsSync(CLI))("verify (end to end)", () => {
   it("accepts a journal it recorded itself", async () => {
     const dir = await record(12);
     const { stdout, code } = await run(["verify", journalOf(dir)]);
-    expect(stdout.trim()).toBe("OK — 12 entrées, chaîne intacte");
+    expect(stdout.trim()).toBe("OK — 12 entries, chain intact");
     expect(code).toBe(0);
   }, 20_000);
 
   it("finds the journal from MCP_BLACKBOX_DIR with no path given", async () => {
     const dir = await record(3);
     const { stdout, code } = await run(["verify"], { MCP_BLACKBOX_DIR: dir });
-    expect(stdout).toContain("3 entrées, chaîne intacte");
+    expect(stdout).toContain("3 entries, chain intact");
     expect(code).toBe(0);
   }, 20_000);
 
@@ -95,8 +95,8 @@ describe.skipIf(!existsSync(CLI))("verify (end to end)", () => {
     writeEntries(dir, entries);
 
     const { stdout, code } = await run(["verify", journalOf(dir)]);
-    expect(stdout).toContain("ROMPUE à l'entrée 4 (seq 4)");
-    expect(stdout).toContain("hash recalculé");
+    expect(stdout).toContain("BROKEN at entry 4 (seq 4)");
+    expect(stdout).toContain("recomputed hash");
     expect(code).toBe(1);
   }, 20_000);
 
@@ -107,7 +107,7 @@ describe.skipIf(!existsSync(CLI))("verify (end to end)", () => {
     writeEntries(dir, entries);
 
     const { stdout, code } = await run(["verify", journalOf(dir)]);
-    expect(stdout).toContain("ROMPUE à l'entrée 2");
+    expect(stdout).toContain("BROKEN at entry 2");
     expect(code).toBe(1);
   }, 20_000);
 
@@ -116,13 +116,13 @@ describe.skipIf(!existsSync(CLI))("verify (end to end)", () => {
     writeFileSync(journalOf(dir), `${readFileSync(journalOf(dir), "utf8")}{"seq":4,\n`);
 
     const { stdout, code } = await run(["verify", journalOf(dir)]);
-    expect(stdout).toContain("ROMPUE à l'entrée 4 (illisible)");
+    expect(stdout).toContain("BROKEN at entry 4 (unreadable)");
     expect(code).toBe(1);
   }, 20_000);
 
   it("exits 1 with a message when there is no journal", async () => {
     const { stderr, code } = await run(["verify", join(tmpdir(), "absent-journal-xyz.jsonl")]);
-    expect(stderr).toContain("aucun journal à");
+    expect(stderr).toContain("no journal at");
     expect(code).toBe(1);
   });
 
@@ -150,11 +150,11 @@ describe.skipIf(!existsSync(CLI))("summary (end to end)", () => {
     const dir = await record(12);
     const { stdout, code } = await run(["summary", journalOf(dir)]);
 
-    expect(stdout).toContain("Appels    12");
-    expect(stdout).toContain("Par outil");
-    expect(stdout).toContain("Par serveur");
+    expect(stdout).toContain("Calls     12");
+    expect(stdout).toContain("By tool");
+    expect(stdout).toContain("By server");
     expect(stdout).toContain("fake-mcp-server");
-    expect(stdout).toContain("en échec");
+    expect(stdout).toContain("failed");
     expect(code).toBe(0);
   }, 20_000);
 
@@ -184,7 +184,7 @@ describe.skipIf(!existsSync(CLI))("summary (end to end)", () => {
 
   it("exits 1 when there is no journal", async () => {
     const { stderr, code } = await run(["summary", join(tmpdir(), "absent-journal-xyz.jsonl")]);
-    expect(stderr).toContain("aucun journal à");
+    expect(stderr).toContain("no journal at");
     expect(code).toBe(1);
   });
 });

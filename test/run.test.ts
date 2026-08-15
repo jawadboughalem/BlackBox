@@ -52,7 +52,7 @@ describe("runCli", () => {
       const h = harness();
       const missing = resolve(CWD, "definitely-absent-journal.jsonl");
       expect(await runCli([command, missing], h.context)).toBe(EXIT_FAILED);
-      expect(h.stderr()).toContain("aucun journal à");
+      expect(h.stderr()).toContain("no journal at");
       expect(h.stdout()).toBe("");
     },
   );

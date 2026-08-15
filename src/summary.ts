@@ -78,24 +78,24 @@ export function formatSummary(summary: Summary): string {
   const lines: string[] = [summary.path, ""];
 
   if (summary.calls === 0) {
-    lines.push("Aucun appel enregistré.");
-    if (summary.skipped > 0) lines.push(`${summary.skipped} ligne(s) illisible(s) ignorée(s).`);
+    lines.push("No calls recorded.");
+    if (summary.skipped > 0) lines.push(`${summary.skipped} unreadable line(s) skipped.`);
     return lines.join("\n");
   }
 
-  const percent = `${(summary.failure_rate * 100).toFixed(1)} %`;
+  const percent = `${(summary.failure_rate * 100).toFixed(1)}%`;
   lines.push(
-    `Période   ${summary.period.from} → ${summary.period.to}`,
-    `Appels    ${summary.calls} (${summary.failures} en échec, ${percent})`,
-    `Durée     médiane ${summary.duration_ms.median} ms · p95 ${summary.duration_ms.p95} ms`,
+    `Period    ${summary.period.from} → ${summary.period.to}`,
+    `Calls     ${summary.calls} (${summary.failures} failed, ${percent})`,
+    `Duration  median ${summary.duration_ms.median} ms · p95 ${summary.duration_ms.p95} ms`,
   );
 
   if (summary.skipped > 0) {
-    lines.push(`Ignorées  ${summary.skipped} ligne(s) illisible(s)`);
+    lines.push(`Skipped   ${summary.skipped} unreadable line(s)`);
   }
 
-  lines.push("", "Par outil", ...table(summary.by_tool));
-  lines.push("", "Par serveur", ...table(summary.by_server));
+  lines.push("", "By tool", ...table(summary.by_tool));
+  lines.push("", "By server", ...table(summary.by_server));
 
   return lines.join("\n");
 }
@@ -103,7 +103,7 @@ export function formatSummary(summary: Summary): string {
 function table(groups: readonly GroupStats[]): string[] {
   const width = Math.max(0, ...groups.map((group) => group.name.length));
   return groups.map((group) => {
-    const failures = group.failures === 0 ? "" : `  ${group.failures} en échec`;
+    const failures = group.failures === 0 ? "" : `  ${group.failures} failed`;
     return `  ${group.name.padEnd(width)}  ${String(group.calls).padStart(5)}${failures}`;
   });
 }

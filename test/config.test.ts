@@ -71,7 +71,7 @@ describe("loadConfig", () => {
   it("overrides the maximum string length", () => {
     const loaded = loadConfig(withConfig({ redaction: { maxStringLength: 10 } }));
     expect(loaded.redaction.maxStringLength).toBe(10);
-    expect(redactString("12345678901", loaded.redaction)).toContain("<tronqué:sha256:");
+    expect(redactString("12345678901", loaded.redaction)).toContain("<truncated:sha256:");
   });
 
   it("adds custom sensitive keys without losing the built-ins", () => {
