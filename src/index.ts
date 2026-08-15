@@ -10,8 +10,28 @@ export {
   type JournalEntry,
   type EntryInput,
 } from "./journal.js";
-export { CallRecorder } from "./recorder.js";
+export { CallRecorder, type RecorderOptions } from "./recorder.js";
 export { canonicalJson, sha256, hashValue, GENESIS_HASH } from "./canonical-json.js";
-export { redact, REDACTED } from "./redact.js";
+export {
+  redact,
+  redactString,
+  isSensitiveKey,
+  isLuhnValid,
+  defaultConfig,
+  defaultPatterns,
+  REDACTED,
+  DEFAULT_MAX_STRING_LENGTH,
+  DEFAULT_SENSITIVE_KEYS,
+  type RedactionConfig,
+  type RedactionPattern,
+} from "./redact.js";
+export {
+  loadConfig,
+  findConfigFile,
+  CONFIG_FILENAME,
+  type FileConfig,
+  type LoadedConfig,
+  type RedactionFileConfig,
+} from "./config.js";
 export { HELP_TEXT } from "./help.js";
 export { readVersion } from "./version.js";

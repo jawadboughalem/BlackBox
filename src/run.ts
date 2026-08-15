@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { parseArgs, type ParsedArgs } from "./args.js";
+import { loadConfig } from "./config.js";
 import { HELP_TEXT } from "./help.js";
 import { Journal } from "./journal.js";
 import { runProxy } from "./proxy.js";
@@ -61,7 +62,9 @@ async function dispatch(parsed: ParsedArgs, context: CliContext): Promise<number
       // recording must not be able to stop the user's server from running.
       const journal = Journal.open();
       const invocation = [parsed.command, ...parsed.args].join(" ");
-      const recorder = new CallRecorder(journal, invocation);
+      const recorder = new CallRecorder(journal, invocation, {
+        redaction: loadConfig().redaction,
+      });
       try {
         return await runProxy(
           parsed.command,

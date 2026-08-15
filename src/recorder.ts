@@ -1,6 +1,6 @@
 import { hashValue } from "./canonical-json.js";
 import type { Journal } from "./journal.js";
-import { redact } from "./redact.js";
+import { defaultConfig, redact, type RedactionConfig } from "./redact.js";
 
 /** Cap on in-flight calls, so a server that never answers cannot grow memory. */
 const MAX_PENDING = 1_000;
@@ -24,18 +24,27 @@ type JsonRpcId = string | number;
  * strictly passive: no method here throws, because the relay must not depend on
  * the recorder understanding what went past.
  */
+export interface RecorderOptions {
+  /** Redaction rules applied to arguments before they are written. */
+  redaction?: RedactionConfig;
+  /** Injectable clock, so duration is testable. */
+  now?: () => number;
+}
+
 export class CallRecorder {
   readonly #journal: Journal;
   readonly #fallbackServer: string;
   readonly #pending = new Map<string, PendingCall>();
+  readonly #redaction: RedactionConfig;
   #initializeId: string | null = null;
   #serverName: string | null = null;
   #now: () => number;
 
-  constructor(journal: Journal, fallbackServer: string, now: () => number = () => performance.now()) {
+  constructor(journal: Journal, fallbackServer: string, options: RecorderOptions = {}) {
     this.#journal = journal;
     this.#fallbackServer = fallbackServer;
-    this.#now = now;
+    this.#redaction = options.redaction ?? defaultConfig();
+    this.#now = options.now ?? (() => performance.now());
   }
 
   /** Number of calls awaiting a response; exposed for tests. */
@@ -96,7 +105,9 @@ export class CallRecorder {
       ts: new Date().toISOString(),
       server: this.#serverName ?? this.#fallbackServer,
       tool: call.tool,
-      args_redacted: redact(call.args),
+      args_redacted: redact(call.args, this.#redaction),
+      // Deliberately the original arguments, not the redacted copy: the hash
+      // has to identify what was really sent.
       args_hash: hashValue(call.args ?? null),
       outcome,
       error_message: errorMessage,

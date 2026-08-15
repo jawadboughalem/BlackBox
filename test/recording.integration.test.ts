@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { GENESIS_HASH } from "../src/canonical-json.js";
+import { GENESIS_HASH, hashValue, sha256 } from "../src/canonical-json.js";
 import { computeEntryHash, type JournalEntry } from "../src/journal.js";
 import { REDACTED } from "../src/redact.js";
 
@@ -19,12 +19,19 @@ interface Run {
 }
 
 /** Runs the proxy with the journal pointed at a throwaway directory. */
-function proxied(input: string | Buffer, options: { dir?: string; serverArgs?: string[] } = {}): Promise<Run> {
+function proxied(
+  input: string | Buffer,
+  options: { dir?: string; serverArgs?: string[]; cwd?: string } = {},
+): Promise<Run> {
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), "blackbox-record-"));
   const child = spawn(
     process.execPath,
     [CLI, "--", process.execPath, SERVER, ...(options.serverArgs ?? [])],
-    { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, MCP_BLACKBOX_DIR: dir } },
+    {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env, MCP_BLACKBOX_DIR: dir },
+      ...(options.cwd ? { cwd: options.cwd } : {}),
+    },
   );
 
   const stdout: Buffer[] = [];
@@ -115,6 +122,62 @@ describe.skipIf(!existsSync(CLI))("recording", () => {
     expect(JSON.stringify(first.args_redacted)).not.toContain("secret-value");
     // The hash covers the real arguments, so different secrets stay distinguishable.
     expect(first.args_hash).not.toBe(readJournal(b.dir)[0]!.args_hash);
+  });
+
+  // The whole redaction layer rests on this: what is written is scrubbed, what
+  // is hashed is not, so the hash still identifies the real call.
+  it("hashes the original arguments, not the redacted copy", async () => {
+    const args = { user: "jo", password: "hunter2", note: "ping jo@example.com" };
+    const { dir } = await proxied(INITIALIZE + call(2, "login", args));
+    const [entry] = readJournal(dir);
+
+    expect(entry!.args_redacted).toEqual({
+      user: "jo",
+      password: REDACTED,
+      note: "ping [redacted:email]",
+    });
+    expect(entry!.args_hash).toBe(hashValue(args));
+    expect(entry!.args_hash).not.toBe(hashValue(entry!.args_redacted));
+  });
+
+  it("applies all three redaction mechanisms end to end", async () => {
+    const args = {
+      api_key: "sk-abcdefghijklmnopqrstuvwxyz0123",
+      contact: "jo@example.com",
+      card: "4242 4242 4242 4242",
+      body: "z".repeat(600),
+    };
+    const { dir } = await proxied(INITIALIZE + call(2, "submit", args));
+    const redacted = readJournal(dir)[0]!.args_redacted as Record<string, unknown>;
+
+    expect(redacted["api_key"]).toBe(REDACTED);
+    expect(redacted["contact"]).toBe("[redacted:email]");
+    expect(redacted["card"]).toBe("[redacted:card]");
+    expect(redacted["body"]).toBe(`<tronqué:${sha256("z".repeat(600))}>`);
+
+    const serialised = JSON.stringify(redacted);
+    expect(serialised).not.toContain("sk-abcdefghij");
+    expect(serialised).not.toContain("jo@example.com");
+    expect(serialised).not.toContain("4242");
+    expect(serialised).not.toContain("zzzz");
+  });
+
+  it("honours .mcp-blackbox.json from the working directory", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "blackbox-cfg-"));
+    writeFileSync(
+      join(cwd, ".mcp-blackbox.json"),
+      JSON.stringify({ redaction: { keys: ["project_ref"], disablePatterns: ["email"] } }),
+    );
+
+    const { dir } = await proxied(
+      INITIALIZE + call(2, "submit", { project_ref: "P-1", contact: "jo@example.com" }),
+      { cwd },
+    );
+
+    expect(readJournal(dir)[0]!.args_redacted).toEqual({
+      project_ref: REDACTED,
+      contact: "jo@example.com",
+    });
   });
 
   it("builds a valid chain over 100 calls", async () => {

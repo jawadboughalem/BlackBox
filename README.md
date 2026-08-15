@@ -64,13 +64,52 @@ entry's hash, so any edit to a past entry invalidates every entry after it.
 The first entry's `prev_hash` is all zeroes. Entries are appended and flushed
 one at a time, and a new session continues the existing chain.
 
-Two details worth knowing:
+`outcome` is `error` for a JSON-RPC error *and* for a successful response whose
+result carries `isError` — both are calls that failed.
 
-- `args_redacted` blanks values whose key looks like a credential and trims
-  long strings, so the journal is safe to read and share. `args_hash` covers
-  the untouched arguments, so integrity does not depend on the redacted copy.
-- `outcome` is `error` for a JSON-RPC error *and* for a successful response
-  whose result carries `isError` — both are calls that failed.
+## Redaction
+
+`args_redacted` is scrubbed before it is written, by three purely syntactic
+mechanisms — no inference about what a value means:
+
+1. **Sensitive key names** — a value under `password`, `token`, `secret`,
+   `api_key`, `authorization`, `cookie`, `key` and friends is dropped whole and
+   becomes `[redacted]`. Names are matched per segment, so `apiKey`,
+   `x-api-key` and `API_KEY` all hit, while `monkey` does not.
+2. **Value patterns** — `sk-…` keys, JWTs, IBANs, emails and card numbers are
+   replaced wherever they appear, keeping the surrounding text:
+   `"ping jo@example.com"` becomes `"ping [redacted:email]"`.
+3. **Length** — any string over 500 characters is replaced by
+   `<tronqué:sha256:…>`, hashing the original so the value stays identifiable
+   without being stored.
+
+`args_hash` is computed from the **original** arguments, before any of this, so
+the hash still identifies the real call and two different secrets remain
+distinguishable.
+
+Card numbers are matched by regex and then confirmed with the Luhn checksum.
+Without it every 16-digit identifier — invoice numbers, ids, concatenated
+timestamps — would be redacted as a card.
+
+### Configuration
+
+Drop a `.mcp-blackbox.json` next to your project, or in the journal directory:
+
+```json
+{
+  "redaction": {
+    "maxStringLength": 500,
+    "keys": ["client_ref"],
+    "patterns": [{ "name": "employee", "regex": "EMP-\\d{6}" }],
+    "disablePatterns": ["email"]
+  }
+}
+```
+
+`keys` and `patterns` extend the built-ins rather than replacing them, so a
+config can never weaken redaction by accident; switching a built-in off has to
+be spelled out in `disablePatterns`. An unreadable file, a bad regex or a
+malformed field falls back to the default for that setting rather than failing.
 
 Recording never interferes with relaying. If the journal cannot be opened or
 written — read-only disk, missing permissions, a corrupt tail that would make
