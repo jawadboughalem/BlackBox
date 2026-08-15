@@ -15,6 +15,7 @@ function entry(overrides: Partial<JournalEntry> = {}): JournalEntry {
     args_redacted: {},
     args_hash: `sha256:${"a".repeat(64)}`,
     outcome: "ok",
+    error_kind: null,
     error_message: null,
     duration_ms: 10,
     result_hash: `sha256:${"b".repeat(64)}`,

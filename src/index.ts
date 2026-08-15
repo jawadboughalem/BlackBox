@@ -4,18 +4,35 @@ export {
   readJournalLines,
   iterateJournalLines,
   resolveJournalTargets,
+  resolveJournalScope,
   JournalNotFoundError,
   type JournalLine,
 } from "./journal-reader.js";
 export {
   verifyChain,
   verifyJournals,
+  withIndex,
   formatVerify,
   type VerifyResult,
   type VerifyOk,
   type VerifyBroken,
   type JournalsVerified,
 } from "./verify.js";
+export {
+  verifyIndex,
+  type IndexReport,
+  type IndexBreak,
+  type JournalFacts,
+} from "./verify-index.js";
+export {
+  appendIndexEntry,
+  readIndexEntries,
+  computeIndexHash,
+  indexPath,
+  INDEX_FILENAME,
+  type IndexEntry,
+  type IndexInput,
+} from "./session-index.js";
 export {
   summarise,
   formatSummary,

@@ -34,6 +34,18 @@ export function resolveJournalTargets(
   path: string | null,
   location: { env?: NodeJS.ProcessEnv; home?: string } = {},
 ): string[] {
+  return resolveJournalScope(path, location).files;
+}
+
+/**
+ * The same resolution, keeping the directory when there was one. The index
+ * only makes sense for a whole directory: a single file cannot say what else
+ * should have been there.
+ */
+export function resolveJournalScope(
+  path: string | null,
+  location: { env?: NodeJS.ProcessEnv; home?: string } = {},
+): { directory: string | null; files: string[] } {
   const directory = path === null ? journalDir(location) : path;
 
   let isDirectory = false;
@@ -45,7 +57,7 @@ export function resolveJournalTargets(
 
   if (!isDirectory) {
     if (path === null) throw new JournalNotFoundError(directory);
-    return [path];
+    return { directory: null, files: [path] };
   }
 
   const found = readdirSync(directory)
@@ -54,7 +66,7 @@ export function resolveJournalTargets(
     .map((name) => join(directory, name));
 
   if (found.length === 0) throw new JournalNotFoundError(directory);
-  return found;
+  return { directory, files: found };
 }
 
 /** Bytes pulled from the journal per read. */
@@ -155,6 +167,11 @@ function describeShape(value: unknown): string | null {
   const outcome = record["outcome"];
   if (outcome !== "ok" && outcome !== "error") {
     return `outcome must be "ok" or "error", got ${JSON.stringify(outcome)}`;
+  }
+
+  const kind = record["error_kind"];
+  if (kind !== null && kind !== "protocol" && kind !== "tool") {
+    return `error_kind must be "protocol", "tool" or null, got ${JSON.stringify(kind)}`;
   }
 
   return null;

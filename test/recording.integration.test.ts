@@ -313,8 +313,10 @@ describe.skipIf(!existsSync(CLI))("recording", () => {
       expect(responses).toHaveLength(2);
       expect(JSON.parse(responses[1]!)).toMatchObject({ id: 2, result: {} });
       expect(code).toBe(0);
-      expect(stderr).toBe("");
       expect(journalFiles(dir)).toEqual([]);
+      // Losing coverage is reported, never silent — but only on stderr, so the
+      // relay on stdout is untouched.
+      expect(stderr).toContain("recording disabled");
     });
 
     it("relays normally when the journal directory is read-only", async () => {
@@ -327,7 +329,7 @@ describe.skipIf(!existsSync(CLI))("recording", () => {
         const { stdout, code, stderr } = await proxied(INITIALIZE + call(2, "echo"), { dir });
         expect(stdout.toString().split("\n").filter(Boolean)).toHaveLength(2);
         expect(code).toBe(0);
-        expect(stderr).toBe("");
+        if (readOnly) expect(stderr).toContain("recording disabled");
       } finally {
         if (readOnly) chmodSync(dir, 0o755);
       }

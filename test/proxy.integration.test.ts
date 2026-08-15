@@ -34,6 +34,21 @@ function run(command: string[], input: Buffer | string = ""): Promise<Result> {
   });
 }
 
+/** Runs a command through the platform shell, for comparison. */
+function runShell(command: string): Promise<Result> {
+  const child = spawn(command, { shell: true, stdio: ["ignore", "pipe", "pipe"] });
+  const stdout: Buffer[] = [];
+  let stderr = "";
+  child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk: string) => {
+    stderr += chunk;
+  });
+  return new Promise((resolve) => {
+    child.on("close", (code) => resolve({ stdout: Buffer.concat(stdout), stderr, code }));
+  });
+}
+
 /** The same server run directly, with no proxy in between. */
 const direct = (serverArgs: string[] = [], input: Buffer | string = "") =>
   run([SERVER, ...serverArgs], input);
@@ -145,10 +160,17 @@ describe.skipIf(!existsSync(CLI))("proxy mode", () => {
 
   // Exercises the Windows shell path end to end: `npm` is a .cmd shim there,
   // the same shape as the `npx` invocation a real MCP server is launched with.
-  it("relays a command that is a shell shim on Windows", async () => {
-    const { stdout, code } = await run([CLI, "--", "npm", "--version"]);
-    expect(stdout.toString().trim()).toMatch(/^\d+\.\d+\.\d+/);
-    expect(code).toBe(0);
+  // Byte transparency has to survive cmd.exe too, so this compares against the
+  // same command run directly rather than just checking the output looks right.
+  it("relays a command that is a shell shim on Windows, byte for byte", async () => {
+    const [direct, viaProxy] = await Promise.all([
+      runShell("npm --version"),
+      run([CLI, "--", "npm", "--version"]),
+    ]);
+
+    expect(viaProxy.stdout.toString().trim()).toMatch(/^\d+\.\d+\.\d+/);
+    expect(viaProxy.stdout.equals(direct.stdout)).toBe(true);
+    expect(viaProxy.code).toBe(direct.code);
   }, 30_000);
 });
 

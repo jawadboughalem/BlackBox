@@ -23,6 +23,7 @@ function buildJournal(count: number): { dir: string; path: string } {
       args_redacted: { index },
       args_hash: `sha256:${"a".repeat(64)}`,
       outcome: index % 5 === 0 ? "error" : "ok",
+      error_kind: index % 5 === 0 ? "protocol" : null,
       error_message: index % 5 === 0 ? "boom" : null,
       duration_ms: index,
       result_hash: `sha256:${"b".repeat(64)}`,
@@ -86,19 +87,19 @@ describe("resolveJournalTargets", () => {
 describe("verifyChain — intact journals", () => {
   it("accepts a single entry", () => {
     const { path } = buildJournal(1);
-    expect(verify(path)).toEqual({ ok: true, path, entries: 1 });
+    expect(verify(path)).toMatchObject({ ok: true, path, entries: 1 });
   });
 
   it("accepts 100 entries", () => {
     const { path } = buildJournal(100);
-    expect(verify(path)).toEqual({ ok: true, path, entries: 100 });
+    expect(verify(path)).toMatchObject({ ok: true, path, entries: 100 });
   });
 
   it("accepts an empty journal", () => {
     const dir = mkdtempSync(join(tmpdir(), "blackbox-verify-"));
     const path = join(dir, "journal.jsonl");
     writeFileSync(path, "");
-    expect(verify(path)).toEqual({ ok: true, path, entries: 0 });
+    expect(verify(path)).toMatchObject({ ok: true, path, entries: 0 });
   });
 
   it("ignores blank lines between entries", () => {
@@ -284,6 +285,7 @@ describe("iterateJournalLines", () => {
         args_redacted: { blob: "x".repeat(100_000) },
         args_hash: `sha256:${"a".repeat(64)}`,
         outcome: "ok",
+        error_kind: null,
         error_message: null,
         duration_ms: 1,
         result_hash: `sha256:${"b".repeat(64)}`,
@@ -292,7 +294,7 @@ describe("iterateJournalLines", () => {
     journal.close();
 
     const path = join(dir, "journal.jsonl");
-    expect(verify(path)).toEqual({ ok: true, path, entries: 5 });
+    expect(verify(path)).toMatchObject({ ok: true, path, entries: 5 });
   });
 
   it("closes the file even when the consumer stops early", () => {

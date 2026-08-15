@@ -107,7 +107,7 @@ export class CallRecorder {
     if (call === undefined) return;
     this.#pending.delete(id);
 
-    const { outcome, errorMessage, payload } = interpret(message);
+    const { outcome, errorKind, errorMessage, payload } = interpret(message);
 
     try {
       this.#journal.record({
@@ -119,6 +119,7 @@ export class CallRecorder {
         // has to identify what was really sent.
         args_hash: hashValue(call.args ?? null),
         outcome,
+        error_kind: errorKind,
         error_message: errorMessage,
         duration_ms: Math.round(this.#now() - call.startedAt),
         result_hash: hashValue(payload ?? null),
@@ -138,21 +139,32 @@ export class CallRecorder {
  */
 function interpret(message: Record<string, unknown>): {
   outcome: "ok" | "error";
+  errorKind: "protocol" | "tool" | null;
   errorMessage: string | null;
   payload: unknown;
 } {
   const error = asRecord(message["error"]);
   if (error !== null) {
     const text = typeof error["message"] === "string" ? error["message"] : "unknown error";
-    return { outcome: "error", errorMessage: clamp(text), payload: message["error"] };
+    return {
+      outcome: "error",
+      errorKind: "protocol",
+      errorMessage: clamp(text),
+      payload: message["error"],
+    };
   }
 
   const result = asRecord(message["result"]);
   if (result?.["isError"] === true) {
-    return { outcome: "error", errorMessage: clamp(textOf(result)), payload: message["result"] };
+    return {
+      outcome: "error",
+      errorKind: "tool",
+      errorMessage: clamp(textOf(result)),
+      payload: message["result"],
+    };
   }
 
-  return { outcome: "ok", errorMessage: null, payload: message["result"] };
+  return { outcome: "ok", errorKind: null, errorMessage: null, payload: message["result"] };
 }
 
 /** Pulls the first text block out of an MCP tool result. */

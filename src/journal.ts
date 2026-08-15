@@ -10,8 +10,9 @@ import {
   writeSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { GENESIS_HASH, canonicalJson, sha256 } from "./canonical-json.js";
+import { appendIndexEntry } from "./session-index.js";
 
 /** One completed `tools/call`, as written to the journal. */
 export interface JournalEntry {
@@ -22,6 +23,13 @@ export interface JournalEntry {
   args_redacted: unknown;
   args_hash: string;
   outcome: "ok" | "error";
+  /**
+   * Which kind of failure it was. "protocol" is a JSON-RPC error: the call
+   * never ran. "tool" is a result carrying isError: the tool ran and refused.
+   * For a record of what happened these are different facts, so they are kept
+   * apart rather than merged into `outcome`.
+   */
+  error_kind: "protocol" | "tool" | null;
   error_message: string | null;
   duration_ms: number;
   result_hash: string;
@@ -35,6 +43,13 @@ export type EntryInput = Omit<JournalEntry, "seq" | "prev_hash" | "hash">;
 export interface JournalLocation {
   env?: NodeJS.ProcessEnv;
   home?: string;
+}
+
+export interface OpenOptions {
+  /** Record this session in the directory's index when it closes. */
+  index?: boolean;
+  /** Told why recording is degraded, so nothing is lost quietly. */
+  onProblem?: (message: string) => void;
 }
 
 /**
@@ -96,6 +111,8 @@ export class Journal {
   #prevHash: string;
   #written = 0;
   #createdEmpty: boolean;
+  #openedAt = new Date().toISOString();
+  #options: OpenOptions;
   readonly path: string;
 
   private constructor(
@@ -104,24 +121,26 @@ export class Journal {
     prevHash: string,
     path: string,
     createdEmpty = false,
+    options: OpenOptions = {},
   ) {
     this.#fd = fd;
     this.#seq = seq;
     this.#prevHash = prevHash;
     this.path = path;
     this.#createdEmpty = createdEmpty;
+    this.#options = options;
   }
 
-  /** Opens this session's own journal file. Never throws. */
-  static open(location: JournalLocation = {}): Journal {
-    return Journal.openAt(sessionJournalPath(location));
+  /** Opens this session's own journal file, indexed on close. Never throws. */
+  static open(location: JournalLocation = {}, options: OpenOptions = {}): Journal {
+    return Journal.openAt(sessionJournalPath(location), { index: true, ...options });
   }
 
   /**
    * Opens a specific file, continuing its chain if it already holds entries.
    * Used for the session file, and by anything that needs to name the file.
    */
-  static openAt(path: string): Journal {
+  static openAt(path: string, options: OpenOptions = {}): Journal {
     try {
       mkdirSync(dirname(path), { recursive: true, mode: DIR_MODE });
       tighten(dirname(path), DIR_MODE);
@@ -131,9 +150,14 @@ export class Journal {
       const fd = openSync(path, "a", FILE_MODE);
       // An existing file predates this open, so its mode is not ours to assume.
       tighten(path, FILE_MODE);
-      return new Journal(fd, seq, prevHash, path, fresh);
-    } catch {
-      return new Journal(null, 1, GENESIS_HASH, path);
+      return new Journal(fd, seq, prevHash, path, fresh, options);
+    } catch (error) {
+      // Failing closed on integrity: a tail that cannot be read means the next
+      // entry's prev_hash cannot be trusted, so nothing more is written. Saying
+      // so matters — losing coverage silently defeats the point of the tool.
+      const reason = error instanceof Error ? error.message : String(error);
+      options.onProblem?.(`recording disabled for ${path}: ${reason}`);
+      return new Journal(null, 1, GENESIS_HASH, path, false, options);
     }
   }
 
@@ -167,6 +191,7 @@ export class Journal {
         args_redacted: input.args_redacted,
         args_hash: input.args_hash,
         outcome: input.outcome,
+        error_kind: input.error_kind,
         error_message: input.error_message,
         duration_ms: input.duration_ms,
         result_hash: input.result_hash,
@@ -195,7 +220,24 @@ export class Journal {
 
   close(): void {
     const empty = this.#createdEmpty && this.#written === 0;
+    const indexed = this.#written > 0 && this.#options.index === true;
+    const closedAt = new Date().toISOString();
     this.#close();
+
+    if (indexed) {
+      const written = appendIndexEntry(dirname(this.path), {
+        file: this.path,
+        opened_at: this.#openedAt,
+        closed_at: closedAt,
+        entries: this.#written,
+        last_entry_hash: this.#prevHash,
+      });
+      if (written === null) {
+        this.#options.onProblem?.(
+          `could not index ${basename(this.path)}; verify will report it as unindexed`,
+        );
+      }
+    }
 
     // A server that started and recorded nothing should not leave a file
     // behind: clients restart their servers often, and empty journals would

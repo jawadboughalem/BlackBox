@@ -56,7 +56,9 @@ function record(calls: number, into?: string): Promise<string> {
 
 /** The single session file a `record()` run produced. */
 function journalOf(dir: string): string {
-  const [name] = readdirSync(dir).filter((entry) => entry.endsWith(".jsonl")).sort();
+  const [name] = readdirSync(dir)
+    .filter((entry) => entry.startsWith("journal-") && entry.endsWith(".jsonl"))
+    .sort();
   return join(dir, name ?? "journal.jsonl");
 }
 
@@ -131,7 +133,7 @@ describe.skipIf(!existsSync(CLI))("verify (end to end)", () => {
     await Promise.all([record(6, dir), record(6, dir)]);
 
     const { stdout, code } = await run(["verify"], { MCP_BLACKBOX_DIR: dir });
-    expect(readdirSync(dir).filter((n) => n.endsWith(".jsonl"))).toHaveLength(2);
+    expect(readdirSync(dir).filter((n) => n.startsWith("journal-"))).toHaveLength(2);
     expect(stdout).toContain("12 entries across 2 sessions, chains intact");
     expect(code).toBe(0);
   }, 30_000);
@@ -145,7 +147,7 @@ describe.skipIf(!existsSync(CLI))("verify (end to end)", () => {
   it("emits JSON with --json", async () => {
     const dir = await record(4);
     const { stdout, code } = await run(["verify", journalOf(dir), "--json"]);
-    expect(JSON.parse(stdout)).toEqual({ ok: true, files: 1, entries: 4, broken: null });
+    expect(JSON.parse(stdout)).toMatchObject({ ok: true, files: 1, entries: 4, broken: null });
     expect(code).toBe(0);
   }, 20_000);
 

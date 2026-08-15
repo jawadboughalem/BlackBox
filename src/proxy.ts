@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { constants } from "node:os";
 import { LineTap } from "./line-tap.js";
 import type { CallRecorder } from "./recorder.js";
@@ -70,9 +70,9 @@ export function runProxy(
 
     const onSignal = (signal: (typeof FORWARDED_SIGNALS)[number]) => {
       if (settled) return;
-      child.kill(signal);
+      terminate(child, signal);
       // A child that ignores the signal must not strand the proxy.
-      killTimer = setTimeout(() => child.kill("SIGKILL"), KILL_GRACE_MS);
+      killTimer = setTimeout(() => terminate(child, "SIGKILL"), KILL_GRACE_MS);
       killTimer.unref();
     };
 
@@ -106,6 +106,29 @@ export function runProxy(
       else settle(code ?? 0);
     });
   });
+}
+
+/**
+ * Ends the child, and on Windows everything it started.
+ *
+ * A shim command there runs under cmd.exe, and Windows has no signals: kill()
+ * calls TerminateProcess on cmd.exe alone, leaving the real server — the node
+ * process npx launched — running with nobody to stop it. taskkill /T ends the
+ * tree instead. On POSIX the signal is delivered normally.
+ */
+function terminate(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (process.platform !== "win32" || child.pid === undefined) {
+    child.kill(signal);
+    return;
+  }
+
+  const killed = spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  // taskkill may be unavailable or the process already gone; fall back rather
+  // than leave the proxy waiting on a child it cannot end.
+  if (killed.error !== undefined || killed.status !== 0) child.kill(signal);
 }
 
 function spawnChild(command: string, args: readonly string[]): ChildProcess {
