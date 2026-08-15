@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { constants } from "node:os";
-import { LineSplitter } from "./line-splitter.js";
+import { LineTap } from "./line-tap.js";
+import type { CallRecorder } from "./recorder.js";
 
 /** Raw streams the relay moves bytes between. */
 export interface ProxyStreams {
@@ -33,6 +34,7 @@ export function runProxy(
   command: string,
   args: readonly string[],
   streams: ProxyStreams,
+  recorder?: CallRecorder,
 ): Promise<number> {
   return new Promise((resolve) => {
     let child: ChildProcess;
@@ -46,6 +48,7 @@ export function runProxy(
 
     let settled = false;
     let killTimer: NodeJS.Timeout | undefined;
+    let inboundTap: LineTap | undefined;
 
     const cleanup = () => {
       if (killTimer) clearTimeout(killTimer);
@@ -54,7 +57,7 @@ export function runProxy(
       }
       // Stop pulling on the parent's stdin, otherwise the read handle keeps the
       // event loop alive long after the child is gone.
-      if (child.stdin) streams.stdin.unpipe(child.stdin);
+      if (inboundTap) streams.stdin.unpipe(inboundTap);
       streams.stdin.pause();
     };
 
@@ -81,10 +84,16 @@ export function runProxy(
     // buffered input; that surfaces as EPIPE and is not an error here.
     if (child.stdin) {
       child.stdin.on("error", () => {});
-      streams.stdin.pipe(child.stdin);
+      inboundTap = new LineTap((line) => recorder?.observeRequest(line));
+      streams.stdin.pipe(inboundTap).pipe(child.stdin);
     }
 
-    if (child.stdout) relayLines(child.stdout, streams.stdout);
+    if (child.stdout) {
+      const outboundTap = new LineTap((line) => recorder?.observeResponse(line));
+      // end: false — the child closing its stdout must not close the proxy's.
+      child.stdout.pipe(outboundTap).pipe(streams.stdout, { end: false });
+    }
+
     if (child.stderr) child.stderr.on("data", (chunk: Buffer) => streams.stderr.write(chunk));
 
     child.on("error", (error) => {
@@ -96,18 +105,6 @@ export function runProxy(
       if (signal) settle(128 + signalNumber(signal));
       else settle(code ?? 0);
     });
-  });
-}
-
-/** Pipes a stream through line framing, preserving every byte. */
-function relayLines(source: NodeJS.ReadableStream, sink: NodeJS.WritableStream): void {
-  const splitter = new LineSplitter();
-  source.on("data", (chunk: Buffer) => {
-    for (const line of splitter.push(chunk)) sink.write(line);
-  });
-  source.on("end", () => {
-    const rest = splitter.flush();
-    if (rest) sink.write(rest);
   });
 }
 

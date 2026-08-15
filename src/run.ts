@@ -1,7 +1,9 @@
 import { resolve } from "node:path";
 import { parseArgs, type ParsedArgs } from "./args.js";
 import { HELP_TEXT } from "./help.js";
+import { Journal } from "./journal.js";
 import { runProxy } from "./proxy.js";
+import { CallRecorder } from "./recorder.js";
 import { readVersion } from "./version.js";
 
 /** Streams and ambient state the CLI needs, injectable so tests stay hermetic. */
@@ -54,12 +56,23 @@ async function dispatch(parsed: ParsedArgs, context: CliContext): Promise<number
 
     // Deliberately silent: in proxy mode stdout carries the child's protocol
     // traffic and nothing else.
-    case "proxy":
-      return runProxy(parsed.command, parsed.args, {
-        stdin: context.stdin,
-        stdout: context.stdout,
-        stderr: context.stderr,
-      });
+    case "proxy": {
+      // A journal that cannot be opened is a disabled journal, never an error:
+      // recording must not be able to stop the user's server from running.
+      const journal = Journal.open();
+      const invocation = [parsed.command, ...parsed.args].join(" ");
+      const recorder = new CallRecorder(journal, invocation);
+      try {
+        return await runProxy(
+          parsed.command,
+          parsed.args,
+          { stdin: context.stdin, stdout: context.stdout, stderr: context.stderr },
+          recorder,
+        );
+      } finally {
+        journal.close();
+      }
+    }
 
     case "verify":
     case "summary":

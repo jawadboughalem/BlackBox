@@ -62,14 +62,30 @@ const handle = (request) => {
   }
 
   if (request.method === "tools/call") {
+    const name = request.params?.name ?? "unknown";
+
+    // A protocol-level failure: the call itself could not be dispatched.
+    if (name === "explode") {
+      return {
+        jsonrpc: "2.0",
+        id: request.id,
+        error: { code: -32602, message: "Unknown tool: explode" },
+      };
+    }
+
+    // A tool-level failure: the call succeeded, the tool reported an error.
+    if (name === "tool-error") {
+      return {
+        jsonrpc: "2.0",
+        id: request.id,
+        result: { isError: true, content: [{ type: "text", text: "disk on fire" }] },
+      };
+    }
+
     return {
       jsonrpc: "2.0",
       id: request.id,
-      result: {
-        content: [
-          { type: "text", text: `called ${request.params?.name ?? "unknown"}` },
-        ],
-      },
+      result: { content: [{ type: "text", text: `called ${name}` }] },
     };
   }
 
