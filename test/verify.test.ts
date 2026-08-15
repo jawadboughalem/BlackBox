@@ -201,7 +201,7 @@ describe("verifyChain — tampered journals", () => {
 
   it("catches an unexpected outcome value", () => {
     const { path } = buildJournal(1);
-    const entries = entriesOf(path) as Array<Record<string, unknown>>;
+    const entries = entriesOf(path) as unknown as Array<Record<string, unknown>>;
     entries[0]!["outcome"] = "maybe";
     writeEntries(path, entries);
     expect(verify(path).ok).toBe(false);
