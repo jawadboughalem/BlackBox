@@ -41,9 +41,17 @@ function twoSessions(dir: string): { first: string; second: string } {
   return { first, second };
 }
 
-/** Same as `session`, but with a name that cannot collide with the previous. */
+let counter = 0;
+
+/**
+ * Same as `session`, but with a name that cannot collide with any other.
+ * A pseudo-random suffix would occasionally repeat, and two sessions sharing a
+ * file is exactly the bug the per-session layout exists to prevent — a flaky
+ * test here would look like the very defect under test.
+ */
 function openLater(dir: string, tool: string): string {
-  const path = join(dir, `journal-20990101T000000Z-${Math.floor(process.hrtime()[1] % 100000)}.jsonl`);
+  counter += 1;
+  const path = join(dir, `journal-20990101T0000${String(counter).padStart(2, "0")}Z-${counter}.jsonl`);
   const journal = Journal.openAt(path, { index: true });
   journal.record({
     ts: "2099-01-01T00:00:00.000Z",
