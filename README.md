@@ -59,13 +59,31 @@ mcp-blackbox summary          Aggregate the recorded calls
 mcp-blackbox verify           Recompute the hash chain
 ```
 
-Both take an optional path — a journal file, or a directory containing one —
-and accept `--json`. `verify` exits 1 if the chain is broken.
+Both take an optional path — a journal file, or a directory of them — and
+accept `--json`. With no path they read every journal in the recording
+directory. `verify` exits 1 if any chain is broken.
 
 ## A journal entry
 
-Every completed `tools/call` appends one JSON object to
-`~/.mcp-blackbox/journal.jsonl`. Set `MCP_BLACKBOX_DIR` to record elsewhere.
+Every completed `tools/call` appends one JSON object to a journal in
+`~/.mcp-blackbox/`. Set `MCP_BLACKBOX_DIR` to record elsewhere.
+
+Each proxy session writes its own file, named for the moment it started and the
+process that wrote it:
+
+```
+~/.mcp-blackbox/
+  journal-20260815T174508Z-11240.jsonl
+  journal-20260815T174508Z-11242.jsonl
+```
+
+MCP clients routinely run several servers at once. If those sessions shared one
+file they would each read its tail at startup, claim the same sequence numbers
+and interleave their writes, producing a chain that fails verification with
+nobody having tampered with anything. A file per session removes the shared
+state rather than guarding it, so no locking is needed to be correct. Each file
+carries its own chain from the genesis hash, and `verify` and `summary` read
+them all. A session that records nothing leaves no file behind.
 
 ```json
 {
@@ -100,7 +118,9 @@ Every completed `tools/call` appends one JSON object to
 | `hash` | Hash of this entry, excluding this field |
 
 Entries are appended and flushed one at a time, so a crash loses at most the
-call in flight. A new session continues the existing chain.
+call in flight. Journals are created `0600` inside a `0700` directory, since
+they hold tool arguments and file paths that redaction is not guaranteed to
+have recognised as sensitive.
 
 Recording never interferes with relaying. If the journal cannot be opened or
 written — read-only disk, missing permissions, a corrupt tail that would make
@@ -113,8 +133,8 @@ could not be written.
 - No cloud. There is no service to sign up for and no account.
 - No telemetry, no analytics, no crash reporting, no update check.
 - No network access of any kind. The tool opens no sockets.
-- No data leaves the machine. The journal is a file in your home directory, and
-  nothing reads it but you.
+- No data leaves the machine. Journals are files in your home directory,
+  created private to your user account.
 - No runtime dependencies. The published package is the compiled source and
   nothing else.
 - No interpretation of your traffic. Calls are recorded, not judged, scored or
@@ -170,7 +190,9 @@ directory:
 `keys` and `patterns` extend the built-ins rather than replacing them, so a
 config cannot weaken redaction by accident; switching a built-in off has to be
 stated in `disablePatterns`. An unreadable file, an invalid regex or a
-malformed field falls back to the default for that setting.
+malformed field falls back to the default for that setting, and the reason is
+reported on stderr — a config that silently redacted less than asked for would
+be worse than one that failed loudly.
 
 ## The hash chain
 
@@ -203,7 +225,7 @@ hexadecimal prefixed with `sha256:`.
 
 - `seq` equals *n*, counting from 1 and ignoring blank lines;
 - `prev_hash` equals entry *n-1*'s `hash`, or `sha256:` followed by 64 zeroes
-  for the first entry;
+  for the first entry of that file — each journal is an independent chain;
 - `hash` equals the entry hash computed above.
 
 The same rule produces `args_hash` and `result_hash`, applied to the arguments
@@ -245,7 +267,7 @@ print(f"OK - {count} entries, chain intact")
 ```
 
 ```
-$ python3 verify.py ~/.mcp-blackbox/journal.jsonl
+$ python3 verify.py ~/.mcp-blackbox/journal-20260815T174508Z-11240.jsonl
 OK - 5 entries, chain intact
 ```
 
@@ -257,7 +279,7 @@ Multilingual Plane.
 **What the chain does and does not prove.** It shows that a journal has not
 been edited in place, that no entry has been removed, reordered or inserted,
 and that a truncated write is visible. It does not prove the journal is
-complete: anyone who can write the file can also delete it and start a new
+complete: anyone who can write the directory can delete a file, or start a new
 chain from the genesis hash. The chain is evidence of tampering, not a defence
 against it. Preventing deletion is a filesystem or backup concern.
 

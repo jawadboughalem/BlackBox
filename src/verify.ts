@@ -85,17 +85,53 @@ export function verifyChain(lines: readonly JournalLine[], path: string): Verify
   return { ok: true, path, entries: lines.length };
 }
 
-/** Renders the result the way the CLI prints it. */
-export function formatVerify(result: VerifyResult): string {
-  if (result.ok) {
-    return `OK — ${result.entries} ${plural(result.entries)}, chain intact`;
+/** Outcome of checking every journal the user pointed at. */
+export interface JournalsVerified {
+  ok: boolean;
+  /** Journals checked. Each proxy session writes its own. */
+  files: number;
+  /** Entries verified across all intact journals. */
+  entries: number;
+  /** The first break found, or null when every chain holds. */
+  broken: VerifyBroken | null;
+}
+
+/**
+ * Verifies several journals. Each carries its own chain from the genesis hash,
+ * so they are checked independently; one damaged session does not make the
+ * others unverifiable.
+ */
+export function verifyJournals(
+  journals: ReadonlyArray<{ path: string; lines: readonly JournalLine[] }>,
+): JournalsVerified {
+  let entries = 0;
+
+  for (const journal of journals) {
+    const result = verifyChain(journal.lines, journal.path);
+    if (!result.ok) {
+      return { ok: false, files: journals.length, entries: entries + result.verified, broken: result };
+    }
+    entries += result.entries;
   }
 
-  const seq = result.seq === null ? "unreadable" : `seq ${result.seq}`;
+  return { ok: true, files: journals.length, entries, broken: null };
+}
+
+/** Renders the result the way the CLI prints it. */
+export function formatVerify(verified: JournalsVerified): string {
+  if (verified.ok) {
+    const scope =
+      verified.files === 1 ? "" : ` across ${verified.files} sessions`;
+    const chains = verified.files === 1 ? "chain" : "chains";
+    return `OK — ${verified.entries} ${plural(verified.entries)}${scope}, ${chains} intact`;
+  }
+
+  const broken = verified.broken!;
+  const seq = broken.seq === null ? "unreadable" : `seq ${broken.seq}`;
   return [
-    `BROKEN at entry ${result.index} (${seq}) — ${result.reason}`,
-    `  file: ${result.path}:${result.line}`,
-    `  ${result.verified} ${plural(result.verified)} verified before the break`,
+    `BROKEN at entry ${broken.index} (${seq}) — ${broken.reason}`,
+    `  file: ${broken.path}:${broken.line}`,
+    `  ${broken.verified} ${plural(broken.verified)} verified before the break`,
   ].join("\n");
 }
 

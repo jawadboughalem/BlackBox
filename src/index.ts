@@ -2,16 +2,18 @@ export { parseArgs, type ParsedArgs } from "./args.js";
 export { runCli, defaultContext, EXIT_USAGE, EXIT_FAILED, type CliContext } from "./run.js";
 export {
   readJournalLines,
-  resolveJournalTarget,
+  resolveJournalTargets,
   JournalNotFoundError,
   type JournalLine,
 } from "./journal-reader.js";
 export {
   verifyChain,
+  verifyJournals,
   formatVerify,
   type VerifyResult,
   type VerifyOk,
   type VerifyBroken,
+  type JournalsVerified,
 } from "./verify.js";
 export {
   summarise,
@@ -25,7 +27,10 @@ export { LineSplitter } from "./line-splitter.js";
 export { LineTap } from "./line-tap.js";
 export {
   Journal,
-  journalPath,
+  journalDir,
+  sessionJournalPath,
+  sessionJournalName,
+  JOURNAL_PATTERN,
   computeEntryHash,
   type JournalEntry,
   type EntryInput,

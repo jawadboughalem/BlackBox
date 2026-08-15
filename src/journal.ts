@@ -1,4 +1,14 @@
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, writeSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  unlinkSync,
+  writeSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { GENESIS_HASH, canonicalJson, sha256 } from "./canonical-json.js";
@@ -27,10 +37,44 @@ export interface JournalLocation {
   home?: string;
 }
 
-/** Resolves the journal file, honouring MCP_BLACKBOX_DIR. */
-export function journalPath({ env = process.env, home = homedir() }: JournalLocation = {}): string {
+/**
+ * The journal is private by default: it holds tool arguments, file paths and
+ * whatever redaction did not recognise as a secret.
+ */
+const DIR_MODE = 0o700;
+const FILE_MODE = 0o600;
+
+/** Directory holding the journals, honouring MCP_BLACKBOX_DIR. */
+export function journalDir({ env = process.env, home = homedir() }: JournalLocation = {}): string {
   const override = env.MCP_BLACKBOX_DIR?.trim();
-  return join(override && override.length > 0 ? override : join(home, ".mcp-blackbox"), "journal.jsonl");
+  return override && override.length > 0 ? override : join(home, ".mcp-blackbox");
+}
+
+/** Matches the journals this tool writes, including the pre-session layout. */
+export const JOURNAL_PATTERN = /^journal(-[^/\\]*)?\.jsonl$/;
+
+/**
+ * Name of the file one proxy session writes to.
+ *
+ * Sessions never share a file. Two proxies writing to one journal would each
+ * read the tail at startup, pick the same next sequence number and interleave
+ * their writes, producing a chain that fails verification with nobody having
+ * tampered with anything — and MCP clients routinely run several servers at
+ * once. A file per session removes the shared state instead of guarding it,
+ * which needs no cross-process locking to be correct.
+ */
+export function sessionJournalName(startedAt: Date, pid: number): string {
+  const stamp = startedAt.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+  return `journal-${stamp}-${pid}.jsonl`;
+}
+
+/** Resolves the file the current session should write to. */
+export function sessionJournalPath(
+  location: JournalLocation = {},
+  startedAt: Date = new Date(),
+  pid: number = process.pid,
+): string {
+  return join(journalDir(location), sessionJournalName(startedAt, pid));
 }
 
 /** Hash of an entry, computed over everything except the hash field itself. */
@@ -50,22 +94,44 @@ export class Journal {
   #fd: number | null;
   #seq: number;
   #prevHash: string;
+  #written = 0;
+  #createdEmpty: boolean;
   readonly path: string;
 
-  private constructor(fd: number | null, seq: number, prevHash: string, path: string) {
+  private constructor(
+    fd: number | null,
+    seq: number,
+    prevHash: string,
+    path: string,
+    createdEmpty = false,
+  ) {
     this.#fd = fd;
     this.#seq = seq;
     this.#prevHash = prevHash;
     this.path = path;
+    this.#createdEmpty = createdEmpty;
   }
 
-  /** Opens the journal, continuing an existing chain. Never throws. */
+  /** Opens this session's own journal file. Never throws. */
   static open(location: JournalLocation = {}): Journal {
-    const path = journalPath(location);
+    return Journal.openAt(sessionJournalPath(location));
+  }
+
+  /**
+   * Opens a specific file, continuing its chain if it already holds entries.
+   * Used for the session file, and by anything that needs to name the file.
+   */
+  static openAt(path: string): Journal {
     try {
-      mkdirSync(dirname(path), { recursive: true });
+      mkdirSync(dirname(path), { recursive: true, mode: DIR_MODE });
+      tighten(dirname(path), DIR_MODE);
+
+      const fresh = !existsSync(path);
       const { seq, prevHash } = readTail(path);
-      return new Journal(openSync(path, "a"), seq, prevHash, path);
+      const fd = openSync(path, "a", FILE_MODE);
+      // An existing file predates this open, so its mode is not ours to assume.
+      tighten(path, FILE_MODE);
+      return new Journal(fd, seq, prevHash, path, fresh);
     } catch {
       return new Journal(null, 1, GENESIS_HASH, path);
     }
@@ -118,6 +184,7 @@ export class Journal {
       }
 
       this.#seq += 1;
+      this.#written += 1;
       this.#prevHash = entry.hash;
       return entry;
     } catch {
@@ -127,7 +194,19 @@ export class Journal {
   }
 
   close(): void {
+    const empty = this.#createdEmpty && this.#written === 0;
     this.#close();
+
+    // A server that started and recorded nothing should not leave a file
+    // behind: clients restart their servers often, and empty journals would
+    // pile up and be counted as sessions by `summary`.
+    if (empty) {
+      try {
+        unlinkSync(this.path);
+      } catch {
+        // Already gone, or not ours to remove.
+      }
+    }
   }
 
   #close(): void {
@@ -141,10 +220,19 @@ export class Journal {
   }
 }
 
+/** Best-effort permission fix; Windows and odd filesystems may ignore it. */
+function tighten(path: string, mode: number): void {
+  try {
+    chmodSync(path, mode);
+  } catch {
+    // Not ours to chmod, or unsupported. The journal is still usable.
+  }
+}
+
 /**
- * Reads the last entry so a new session continues the chain instead of
- * restarting it. Throws when the tail cannot be trusted — the caller turns
- * that into a disabled journal rather than appending an unverifiable link.
+ * Reads the last entry so an existing file is continued rather than restarted.
+ * Throws when the tail cannot be trusted — the caller turns that into a
+ * disabled journal rather than appending an unverifiable link.
  */
 function readTail(path: string): { seq: number; prevHash: string } {
   if (!existsSync(path)) return { seq: 1, prevHash: GENESIS_HASH };

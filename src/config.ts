@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { journalPath } from "./journal.js";
+import { join } from "node:path";
+import { journalDir } from "./journal.js";
 import {
   DEFAULT_MAX_STRING_LENGTH,
   DEFAULT_SENSITIVE_KEYS,
@@ -81,7 +81,7 @@ export function findConfigFile({
 }: ConfigLocation = {}): string | null {
   const candidates = [
     join(cwd, CONFIG_FILENAME),
-    join(dirname(journalPath({ env, home })), CONFIG_FILENAME),
+    join(journalDir({ env, home }), CONFIG_FILENAME),
   ];
   for (const candidate of candidates) {
     try {

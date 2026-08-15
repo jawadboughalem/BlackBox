@@ -1,14 +1,30 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { GENESIS_HASH, canonicalJson, sha256 } from "../src/canonical-json.js";
-import { Journal, computeEntryHash, journalPath, type EntryInput, type JournalEntry } from "../src/journal.js";
+import {
+  Journal,
+  computeEntryHash,
+  journalDir,
+  sessionJournalName,
+  type EntryInput,
+  type JournalEntry,
+} from "../src/journal.js";
 
 const opened: Journal[] = [];
 
+/** Opens a fixed file, so append and resume behaviour stays observable. */
 function openIn(dir: string): Journal {
-  const journal = Journal.open({ env: { MCP_BLACKBOX_DIR: dir } as NodeJS.ProcessEnv });
+  const journal = Journal.openAt(join(dir, "journal.jsonl"));
   opened.push(journal);
   return journal;
 }
@@ -57,26 +73,64 @@ afterEach(() => {
   for (const journal of opened.splice(0)) journal.close();
 });
 
-describe("journalPath", () => {
-  it("defaults to ~/.mcp-blackbox/journal.jsonl", () => {
-    const path = journalPath({ env: {} as NodeJS.ProcessEnv, home: "/home/someone" });
-    expect(path).toBe(join("/home/someone", ".mcp-blackbox", "journal.jsonl"));
+describe("journalDir", () => {
+  it("defaults to ~/.mcp-blackbox", () => {
+    expect(journalDir({ env: {} as NodeJS.ProcessEnv, home: "/home/someone" })).toBe(
+      join("/home/someone", ".mcp-blackbox"),
+    );
   });
 
   it("honours MCP_BLACKBOX_DIR", () => {
-    const path = journalPath({
-      env: { MCP_BLACKBOX_DIR: "/tmp/elsewhere" } as NodeJS.ProcessEnv,
-      home: "/home/someone",
-    });
-    expect(path).toBe(join("/tmp/elsewhere", "journal.jsonl"));
+    expect(
+      journalDir({
+        env: { MCP_BLACKBOX_DIR: "/tmp/elsewhere" } as NodeJS.ProcessEnv,
+        home: "/home/someone",
+      }),
+    ).toBe("/tmp/elsewhere");
   });
 
   it("ignores an empty override", () => {
-    const path = journalPath({
-      env: { MCP_BLACKBOX_DIR: "   " } as NodeJS.ProcessEnv,
-      home: "/home/someone",
-    });
-    expect(path).toBe(join("/home/someone", ".mcp-blackbox", "journal.jsonl"));
+    expect(
+      journalDir({ env: { MCP_BLACKBOX_DIR: "   " } as NodeJS.ProcessEnv, home: "/home/someone" }),
+    ).toBe(join("/home/someone", ".mcp-blackbox"));
+  });
+});
+
+describe("sessionJournalName", () => {
+  // Sessions must never share a file: two proxies appending to one journal
+  // would each claim the same sequence numbers and break the chain.
+  it("is unique per process", () => {
+    const now = new Date("2026-08-15T17:10:00.000Z");
+    expect(sessionJournalName(now, 111)).not.toBe(sessionJournalName(now, 222));
+  });
+
+  it("is unique per start time", () => {
+    expect(sessionJournalName(new Date("2026-08-15T17:10:00.000Z"), 1)).not.toBe(
+      sessionJournalName(new Date("2026-08-15T17:10:01.000Z"), 1),
+    );
+  });
+
+  it("sorts chronologically by name", () => {
+    const earlier = sessionJournalName(new Date("2026-08-15T17:10:00.000Z"), 9);
+    const later = sessionJournalName(new Date("2026-08-15T18:00:00.000Z"), 1);
+    expect([later, earlier].sort()).toEqual([earlier, later]);
+  });
+
+  it("looks like a journal file", () => {
+    expect(sessionJournalName(new Date("2026-08-15T17:10:00.000Z"), 42)).toBe(
+      "journal-20260815T171000Z-42.jsonl",
+    );
+  });
+});
+
+describe("Journal.open", () => {
+  it("writes to a file of its own, never a shared one", () => {
+    const dir = tempDir();
+    const first = Journal.open({ env: { MCP_BLACKBOX_DIR: dir } as NodeJS.ProcessEnv });
+    opened.push(first);
+    expect(first.enabled).toBe(true);
+    expect(first.path).not.toBe(join(dir, "journal.jsonl"));
+    expect(first.path.startsWith(join(dir, "journal-"))).toBe(true);
   });
 });
 
@@ -221,6 +275,56 @@ describe("Journal", () => {
     } finally {
       chmodSync(dir, 0o755);
     }
+  });
+
+  // The journal holds tool arguments and file paths; on a shared machine the
+  // default 0644 would let every other user read them.
+  it.skipIf(process.platform === "win32")("creates a private file and directory", () => {
+    const dir = tempDir();
+    const journal = openIn(dir);
+    journal.record(entry());
+
+    expect(statSync(join(dir, "journal.jsonl")).mode & 0o777).toBe(0o600);
+    expect(statSync(dir).mode & 0o777).toBe(0o700);
+  });
+
+  it.skipIf(process.platform === "win32")("tightens a journal left readable by an older run", () => {
+    const dir = tempDir();
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, "journal.jsonl");
+    writeFileSync(path, "");
+    chmodSync(path, 0o644);
+
+    openIn(dir).record(entry());
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+  });
+
+  it("leaves no file behind when a session records nothing", () => {
+    const dir = tempDir();
+    const journal = Journal.open({ env: { MCP_BLACKBOX_DIR: dir } as NodeJS.ProcessEnv });
+    const path = journal.path;
+    expect(existsSync(path)).toBe(true);
+    journal.close();
+    expect(existsSync(path)).toBe(false);
+  });
+
+  it("keeps a file that holds entries", () => {
+    const dir = tempDir();
+    const journal = Journal.open({ env: { MCP_BLACKBOX_DIR: dir } as NodeJS.ProcessEnv });
+    journal.record(entry());
+    journal.close();
+    expect(existsSync(journal.path)).toBe(true);
+  });
+
+  it("never removes a file it did not create", () => {
+    const dir = tempDir();
+    const first = openIn(dir);
+    first.record(entry());
+    first.close();
+
+    const second = openIn(dir);
+    second.close();
+    expect(existsSync(join(dir, "journal.jsonl"))).toBe(true);
   });
 
   it("keeps working after being closed", () => {

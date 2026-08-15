@@ -1,5 +1,13 @@
 import { spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -48,13 +56,33 @@ function proxied(
   });
 }
 
-function readJournal(dir: string): JournalEntry[] {
-  const path = join(dir, "journal.jsonl");
-  if (!existsSync(path)) return [];
+/** Each session writes its own file, so collect whatever is in the directory. */
+function journalFiles(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  try {
+    return readdirSync(dir)
+      .filter((name) => /^journal(-[^/\\]*)?\.jsonl$/.test(name))
+      .sort()
+      .map((name) => join(dir, name));
+  } catch {
+    return [];
+  }
+}
+
+function entriesIn(path: string): JournalEntry[] {
   return readFileSync(path, "utf8")
     .split("\n")
     .filter((line) => line.trim() !== "")
     .map((line) => JSON.parse(line) as JournalEntry);
+}
+
+function readJournal(dir: string): JournalEntry[] {
+  return journalFiles(dir).flatMap((path) =>
+    readFileSync(path, "utf8")
+      .split("\n")
+      .filter((line) => line.trim() !== "")
+      .map((line) => JSON.parse(line) as JournalEntry),
+  );
 }
 
 function verifyChain(entries: JournalEntry[]): boolean {
@@ -199,15 +227,39 @@ describe.skipIf(!existsSync(CLI))("recording", () => {
     expect(stdout.toString().split("\n").filter(Boolean)).toHaveLength(101);
   }, 30_000);
 
-  it("continues the chain across two sessions", async () => {
+  // Sessions do not share a file. Two proxies appending to one journal would
+  // each read the tail at startup, claim the same sequence numbers and
+  // interleave their writes, breaking a chain nobody tampered with.
+  it("gives each session its own file, each with its own chain", async () => {
     const dir = mkdtempSync(join(tmpdir(), "blackbox-record-"));
     await proxied(INITIALIZE + call(2, "first"), { dir });
     await proxied(INITIALIZE + call(2, "second"), { dir });
 
-    const entries = readJournal(dir);
-    expect(entries.map((item) => item.tool)).toEqual(["first", "second"]);
-    expect(verifyChain(entries)).toBe(true);
+    const files = journalFiles(dir);
+    expect(files).toHaveLength(2);
+    for (const file of files) {
+      const entries = entriesIn(file);
+      expect(entries).toHaveLength(1);
+      expect(verifyChain(entries)).toBe(true);
+    }
+    expect(readJournal(dir).map((item) => item.tool)).toEqual(["first", "second"]);
   });
+
+  it("keeps chains valid when two proxies record at the same time", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "blackbox-record-"));
+    let input = INITIALIZE;
+    for (let index = 0; index < 8; index += 1) input += call(index + 2, `tool-${index}`);
+
+    await Promise.all([proxied(input, { dir }), proxied(input, { dir })]);
+
+    const files = journalFiles(dir);
+    expect(files).toHaveLength(2);
+    for (const file of files) {
+      const entries = entriesIn(file);
+      expect(entries.map((item) => item.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+      expect(verifyChain(entries)).toBe(true);
+    }
+  }, 30_000);
 
   describe("records failures", () => {
     it("marks a JSON-RPC error as an error and keeps its message", async () => {
@@ -262,7 +314,7 @@ describe.skipIf(!existsSync(CLI))("recording", () => {
       expect(JSON.parse(responses[1]!)).toMatchObject({ id: 2, result: {} });
       expect(code).toBe(0);
       expect(stderr).toBe("");
-      expect(existsSync(join(dir, "journal.jsonl"))).toBe(false);
+      expect(journalFiles(dir)).toEqual([]);
     });
 
     it("relays normally when the journal directory is read-only", async () => {

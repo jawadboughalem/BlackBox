@@ -1,6 +1,6 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { journalPath, type JournalEntry } from "./journal.js";
+import { JOURNAL_PATTERN, journalDir, type JournalEntry } from "./journal.js";
 
 /** One physical line of the journal, parsed if it could be. */
 export interface JournalLine {
@@ -19,24 +19,41 @@ export class JournalNotFoundError extends Error {
 }
 
 /**
- * Resolves what the user meant by a path argument.
+ * Resolves what the user meant by a path argument, as a list of journals.
  *
- * Nothing at all means the journal this tool records into. A directory means
- * the journal inside it, so `verify ~/.mcp-blackbox` does the obvious thing.
- * Anything else is taken as the file itself.
+ * Nothing at all means every journal in the recording directory; a directory
+ * means every journal in it; anything else is taken as a single file. Each
+ * proxy session writes its own file, so reading "the journal" means reading
+ * all of them.
+ *
+ * Files come back in name order, which is chronological: the session name
+ * starts with a UTC timestamp.
  */
-export function resolveJournalTarget(
+export function resolveJournalTargets(
   path: string | null,
   location: { env?: NodeJS.ProcessEnv; home?: string } = {},
-): string {
-  if (path === null) return journalPath(location);
+): string[] {
+  const directory = path === null ? journalDir(location) : path;
 
+  let isDirectory = false;
   try {
-    if (statSync(path).isDirectory()) return join(path, "journal.jsonl");
+    isDirectory = statSync(directory).isDirectory();
   } catch {
-    // Not a directory, or not there at all: report it as a file below.
+    // Missing, or not a directory: fall through and treat it as a file.
   }
-  return path;
+
+  if (!isDirectory) {
+    if (path === null) throw new JournalNotFoundError(directory);
+    return [path];
+  }
+
+  const found = readdirSync(directory)
+    .filter((name) => JOURNAL_PATTERN.test(name))
+    .sort()
+    .map((name) => join(directory, name));
+
+  if (found.length === 0) throw new JournalNotFoundError(directory);
+  return found;
 }
 
 /**

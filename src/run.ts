@@ -2,11 +2,11 @@ import { parseArgs, type ParsedArgs } from "./args.js";
 import { loadConfig } from "./config.js";
 import { HELP_TEXT } from "./help.js";
 import { Journal } from "./journal.js";
-import { readJournalLines, resolveJournalTarget } from "./journal-reader.js";
+import { readJournalLines, resolveJournalTargets, type JournalLine } from "./journal-reader.js";
 import { runProxy } from "./proxy.js";
 import { CallRecorder } from "./recorder.js";
 import { formatSummary, summarise } from "./summary.js";
-import { formatVerify, verifyChain } from "./verify.js";
+import { formatVerify, verifyJournals } from "./verify.js";
 import { readVersion } from "./version.js";
 
 /** Streams and ambient state the CLI needs, injectable so tests stay hermetic. */
@@ -37,8 +37,7 @@ export function defaultContext(): CliContext {
 /**
  * Runs the CLI for the given arguments and resolves with the process exit code.
  *
- * `verify` and `summary` are still stubs that report the input they would act
- * on; proxy mode is live.
+ * Proxy mode relays and records; `verify` and `summary` read the journals back.
  */
 export function runCli(
   argv: readonly string[],
@@ -67,8 +66,14 @@ async function dispatch(parsed: ParsedArgs, context: CliContext): Promise<number
       // recording must not be able to stop the user's server from running.
       const journal = Journal.open();
       const invocation = [parsed.command, ...parsed.args].join(" ");
+      const config = loadConfig();
+      // A config problem means less redaction than the user asked for, so it
+      // is reported rather than swallowed. stderr only: stdout is the relay.
+      for (const problem of config.problems) {
+        err(`mcp-blackbox: ${problem}`);
+      }
       const recorder = new CallRecorder(journal, invocation, {
-        redaction: loadConfig().redaction,
+        redaction: config.redaction,
       });
       try {
         return await runProxy(
@@ -83,31 +88,32 @@ async function dispatch(parsed: ParsedArgs, context: CliContext): Promise<number
     }
 
     case "verify": {
-      const target = resolveJournalTarget(parsed.path);
-      let lines;
+      let journals;
       try {
-        lines = readJournalLines(target);
+        journals = readTargets(parsed.path);
       } catch (error) {
         err(`error: ${describe(error)}`);
         return EXIT_FAILED;
       }
 
-      const result = verifyChain(lines, target);
+      const result = verifyJournals(journals);
       out(parsed.json ? JSON.stringify(result, null, 2) : formatVerify(result));
       return result.ok ? 0 : EXIT_FAILED;
     }
 
     case "summary": {
-      const target = resolveJournalTarget(parsed.path);
-      let lines;
+      let journals;
       try {
-        lines = readJournalLines(target);
+        journals = readTargets(parsed.path);
       } catch (error) {
         err(`error: ${describe(error)}`);
         return EXIT_FAILED;
       }
 
-      const result = summarise(lines, target);
+      const result = summarise(
+        journals.flatMap((journal) => journal.lines),
+        journals.map((journal) => journal.path),
+      );
       out(parsed.json ? JSON.stringify(result, null, 2) : formatSummary(result));
       return 0;
     }
@@ -118,6 +124,14 @@ async function dispatch(parsed: ParsedArgs, context: CliContext): Promise<number
       err(HELP_TEXT.trimEnd());
       return EXIT_USAGE;
   }
+}
+
+/** Loads every journal the path argument resolves to. */
+function readTargets(path: string | null): Array<{ path: string; lines: JournalLine[] }> {
+  return resolveJournalTargets(path).map((target) => ({
+    path: target,
+    lines: readJournalLines(target),
+  }));
 }
 
 function describe(error: unknown): string {

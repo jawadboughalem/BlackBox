@@ -27,7 +27,7 @@ function entry(overrides: Partial<JournalEntry> = {}): JournalEntry {
 const asLines = (entries: JournalEntry[]): JournalLine[] =>
   entries.map((item, index) => ({ line: index + 1, entry: item, problem: null }));
 
-const summaryOf = (entries: JournalEntry[]) => summarise(asLines(entries), "/tmp/journal.jsonl");
+const summaryOf = (entries: JournalEntry[]) => summarise(asLines(entries), ["/tmp/journal.jsonl"]);
 
 describe("percentile", () => {
   it("returns 0 for an empty list", () => {
@@ -138,7 +138,7 @@ describe("summarise", () => {
       { line: 2, entry: null, problem: "not valid JSON" },
       { line: 3, entry: entry({ outcome: "error" }), problem: null },
     ];
-    const summary = summarise(lines, "/tmp/journal.jsonl");
+    const summary = summarise(lines, ["/tmp/journal.jsonl"]);
     expect(summary.calls).toBe(2);
     expect(summary.skipped).toBe(1);
     expect(summary.failure_rate).toBeCloseTo(0.5);
@@ -178,7 +178,7 @@ describe("formatSummary", () => {
         { line: 1, entry: entry(), problem: null },
         { line: 2, entry: null, problem: "not valid JSON" },
       ],
-      "/tmp/journal.jsonl",
+      ["/tmp/journal.jsonl"],
     );
     expect(formatSummary(summary)).toContain("1 unreadable line(s)");
   });

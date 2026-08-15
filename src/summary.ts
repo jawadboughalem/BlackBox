@@ -1,3 +1,4 @@
+import { dirname } from "node:path";
 import type { JournalEntry } from "./journal.js";
 import type { JournalLine } from "./journal-reader.js";
 
@@ -8,7 +9,8 @@ export interface GroupStats {
 }
 
 export interface Summary {
-  path: string;
+  /** Journals the figures come from; each proxy session writes its own. */
+  files: string[];
   /** Entries that could be read; unreadable lines are counted separately. */
   calls: number;
   skipped: number;
@@ -21,8 +23,11 @@ export interface Summary {
   by_server: GroupStats[];
 }
 
-/** Aggregates the journal. Unreadable lines are skipped, not fatal. */
-export function summarise(lines: readonly JournalLine[], path: string): Summary {
+/**
+ * Aggregates one or more journals. Unreadable lines are skipped, not fatal:
+ * reporting that a chain is damaged is `verify`'s job.
+ */
+export function summarise(lines: readonly JournalLine[], files: string[]): Summary {
   const entries = lines
     .map((line) => line.entry)
     .filter((entry): entry is JournalEntry => entry !== null);
@@ -32,7 +37,7 @@ export function summarise(lines: readonly JournalLine[], path: string): Summary 
   const durations = entries.map((entry) => entry.duration_ms).sort((a, b) => a - b);
 
   return {
-    path,
+    files,
     calls: entries.length,
     skipped: lines.length - entries.length,
     period: { from: timestamps.at(0) ?? null, to: timestamps.at(-1) ?? null },
@@ -75,7 +80,11 @@ function group(entries: readonly JournalEntry[], key: (entry: JournalEntry) => s
 
 /** Renders the summary the way the CLI prints it. */
 export function formatSummary(summary: Summary): string {
-  const lines: string[] = [summary.path, ""];
+  const header =
+    summary.files.length === 1
+      ? (summary.files[0] ?? "")
+      : `${dirname(summary.files[0] ?? "")}  (${summary.files.length} sessions)`;
+  const lines: string[] = [header, ""];
 
   if (summary.calls === 0) {
     lines.push("No calls recorded.");

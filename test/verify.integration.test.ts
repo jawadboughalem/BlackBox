@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,8 +32,8 @@ function run(args: string[], env: NodeJS.ProcessEnv = {}): Promise<Result> {
 }
 
 /** Records a real session through the proxy and returns its journal. */
-function record(calls: number): Promise<string> {
-  const dir = mkdtempSync(join(tmpdir(), "blackbox-e2e-"));
+function record(calls: number, into?: string): Promise<string> {
+  const dir = into ?? mkdtempSync(join(tmpdir(), "blackbox-e2e-"));
   let input = `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`;
   for (let index = 0; index < calls; index += 1) {
     input += `${JSON.stringify({
@@ -54,7 +54,11 @@ function record(calls: number): Promise<string> {
   return new Promise((resolve) => child.on("close", () => resolve(dir)));
 }
 
-const journalOf = (dir: string) => join(dir, "journal.jsonl");
+/** The single session file a `record()` run produced. */
+function journalOf(dir: string): string {
+  const [name] = readdirSync(dir).filter((entry) => entry.endsWith(".jsonl")).sort();
+  return join(dir, name ?? "journal.jsonl");
+}
 
 function readEntries(dir: string): JournalEntry[] {
   return readFileSync(journalOf(dir), "utf8")
@@ -120,6 +124,18 @@ describe.skipIf(!existsSync(CLI))("verify (end to end)", () => {
     expect(code).toBe(1);
   }, 20_000);
 
+  // The regression that matters most: an MCP client routinely runs several
+  // servers at once, so concurrent proxies are the normal case, not an edge.
+  it("accepts a directory written by two proxies at the same time", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "blackbox-e2e-"));
+    await Promise.all([record(6, dir), record(6, dir)]);
+
+    const { stdout, code } = await run(["verify"], { MCP_BLACKBOX_DIR: dir });
+    expect(readdirSync(dir).filter((n) => n.endsWith(".jsonl"))).toHaveLength(2);
+    expect(stdout).toContain("12 entries across 2 sessions, chains intact");
+    expect(code).toBe(0);
+  }, 30_000);
+
   it("exits 1 with a message when there is no journal", async () => {
     const { stderr, code } = await run(["verify", join(tmpdir(), "absent-journal-xyz.jsonl")]);
     expect(stderr).toContain("no journal at");
@@ -129,7 +145,7 @@ describe.skipIf(!existsSync(CLI))("verify (end to end)", () => {
   it("emits JSON with --json", async () => {
     const dir = await record(4);
     const { stdout, code } = await run(["verify", journalOf(dir), "--json"]);
-    expect(JSON.parse(stdout)).toEqual({ ok: true, path: journalOf(dir), entries: 4 });
+    expect(JSON.parse(stdout)).toEqual({ ok: true, files: 1, entries: 4, broken: null });
     expect(code).toBe(0);
   }, 20_000);
 
@@ -140,7 +156,10 @@ describe.skipIf(!existsSync(CLI))("verify (end to end)", () => {
     writeEntries(dir, entries);
 
     const { stdout, code } = await run(["verify", journalOf(dir), "--json"]);
-    expect(JSON.parse(stdout)).toMatchObject({ ok: false, index: 3, seq: 3, verified: 2 });
+    expect(JSON.parse(stdout)).toMatchObject({
+      ok: false,
+      broken: { index: 3, seq: 3, verified: 2 },
+    });
     expect(code).toBe(1);
   }, 20_000);
 });
@@ -163,7 +182,7 @@ describe.skipIf(!existsSync(CLI))("summary (end to end)", () => {
     const { stdout, code } = await run(["summary", journalOf(dir), "--json"]);
     const summary = JSON.parse(stdout);
 
-    expect(summary).toMatchObject({ path: journalOf(dir), calls: 8, skipped: 0 });
+    expect(summary).toMatchObject({ files: [journalOf(dir)], calls: 8, skipped: 0 });
     expect(summary.by_server).toEqual([
       { name: "fake-mcp-server", calls: 8, failures: expect.any(Number) },
     ]);

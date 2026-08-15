@@ -4,13 +4,13 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { GENESIS_HASH } from "../src/canonical-json.js";
 import { Journal, type JournalEntry } from "../src/journal.js";
-import { readJournalLines, resolveJournalTarget } from "../src/journal-reader.js";
-import { formatVerify, verifyChain } from "../src/verify.js";
+import { readJournalLines, resolveJournalTargets } from "../src/journal-reader.js";
+import { formatVerify, verifyChain, verifyJournals } from "../src/verify.js";
 
 /** Builds a genuine journal of `count` entries, then hands back its lines. */
 function buildJournal(count: number): { dir: string; path: string } {
   const dir = mkdtempSync(join(tmpdir(), "blackbox-verify-"));
-  const journal = Journal.open({ env: { MCP_BLACKBOX_DIR: dir } as NodeJS.ProcessEnv });
+  const journal = Journal.openAt(join(dir, "journal.jsonl"));
   for (let index = 0; index < count; index += 1) {
     journal.record({
       ts: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
@@ -41,21 +41,41 @@ function verify(path: string) {
   return verifyChain(readJournalLines(path), path);
 }
 
-describe("resolveJournalTarget", () => {
-  it("falls back to the configured journal when no path is given", () => {
-    const dir = mkdtempSync(join(tmpdir(), "blackbox-verify-"));
-    const target = resolveJournalTarget(null, { env: { MCP_BLACKBOX_DIR: dir } as NodeJS.ProcessEnv });
-    expect(target).toBe(join(dir, "journal.jsonl"));
+/** The same journal, wrapped as the multi-file result the CLI prints. */
+function verifyOne(path: string) {
+  return verifyJournals([{ path, lines: readJournalLines(path) }]);
+}
+
+describe("resolveJournalTargets", () => {
+  it("lists every journal in the configured directory", () => {
+    const { dir } = buildJournal(1);
+    const targets = resolveJournalTargets(null, {
+      env: { MCP_BLACKBOX_DIR: dir } as NodeJS.ProcessEnv,
+    });
+    expect(targets).toEqual([join(dir, "journal.jsonl")]);
   });
 
-  it("appends journal.jsonl to a directory", () => {
+  it("lists every journal in a given directory, in chronological name order", () => {
     const { dir } = buildJournal(1);
-    expect(resolveJournalTarget(dir)).toBe(join(dir, "journal.jsonl"));
+    writeFileSync(join(dir, "journal-20260101T000000Z-1.jsonl"), "");
+    writeFileSync(join(dir, "journal-20250101T000000Z-1.jsonl"), "");
+    writeFileSync(join(dir, "notes.txt"), "ignored");
+
+    expect(resolveJournalTargets(dir).map((path) => path.split(/[\\/]/).at(-1))).toEqual([
+      "journal-20250101T000000Z-1.jsonl",
+      "journal-20260101T000000Z-1.jsonl",
+      "journal.jsonl",
+    ]);
   });
 
   it("takes a file path as it is", () => {
     const { path } = buildJournal(1);
-    expect(resolveJournalTarget(path)).toBe(path);
+    expect(resolveJournalTargets(path)).toEqual([path]);
+  });
+
+  it("reports a directory holding no journals", () => {
+    const dir = mkdtempSync(join(tmpdir(), "blackbox-verify-"));
+    expect(() => resolveJournalTargets(dir)).toThrow(/no journal/);
   });
 });
 
@@ -86,12 +106,12 @@ describe("verifyChain — intact journals", () => {
 
   it("reports OK in the expected form", () => {
     const { path } = buildJournal(42);
-    expect(formatVerify(verify(path))).toBe("OK — 42 entries, chain intact");
+    expect(formatVerify(verifyOne(path))).toBe("OK — 42 entries, chain intact");
   });
 
   it("uses the singular for one entry", () => {
     const { path } = buildJournal(1);
-    expect(formatVerify(verify(path))).toBe("OK — 1 entry, chain intact");
+    expect(formatVerify(verifyOne(path))).toBe("OK — 1 entry, chain intact");
   });
 });
 
@@ -222,7 +242,7 @@ describe("verifyChain — tampered journals", () => {
     entries[1]!.tool = "tampered";
     writeEntries(path, entries);
 
-    const text = formatVerify(verify(path));
+    const text = formatVerify(verifyOne(path));
     expect(text).toContain("BROKEN at entry 2 (seq 2)");
     expect(text).toContain(`${path}:2`);
     expect(text).toContain("1 entry verified before the break");
