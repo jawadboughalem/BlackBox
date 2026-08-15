@@ -1,5 +1,25 @@
-export { parseArgs, DEFAULT_PATH, type ParsedArgs } from "./args.js";
-export { runCli, defaultContext, EXIT_USAGE, type CliContext } from "./run.js";
+export { parseArgs, type ParsedArgs } from "./args.js";
+export { runCli, defaultContext, EXIT_USAGE, EXIT_FAILED, type CliContext } from "./run.js";
+export {
+  readJournalLines,
+  resolveJournalTarget,
+  JournalNotFoundError,
+  type JournalLine,
+} from "./journal-reader.js";
+export {
+  verifyChain,
+  formatVerify,
+  type VerifyResult,
+  type VerifyOk,
+  type VerifyBroken,
+} from "./verify.js";
+export {
+  summarise,
+  formatSummary,
+  percentile,
+  type Summary,
+  type GroupStats,
+} from "./summary.js";
 export { runProxy, needsShell, quoteForCmd, type ProxyStreams } from "./proxy.js";
 export { LineSplitter } from "./line-splitter.js";
 export { LineTap } from "./line-tap.js";

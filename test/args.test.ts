@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_PATH, parseArgs } from "../src/args.js";
+import { parseArgs } from "../src/args.js";
 
 describe("parseArgs — help and version", () => {
   it("shows help when called with no arguments", () => {
@@ -68,17 +68,17 @@ describe("parseArgs — proxy mode", () => {
 });
 
 describe("parseArgs — verify and summary", () => {
-  it.each(["verify", "summary"] as const)(
-    "defaults %s to the current directory",
-    (name) => {
-      expect(parseArgs([name])).toEqual({ kind: name, path: DEFAULT_PATH });
-    },
-  );
+  // A null path means "not given"; the command turns that into the default
+  // journal, which the parser has no business knowing about.
+  it.each(["verify", "summary"] as const)("leaves the %s path unset when omitted", (name) => {
+    expect(parseArgs([name])).toEqual({ kind: name, path: null, json: false });
+  });
 
   it.each(["verify", "summary"] as const)("reads the %s path", (name) => {
     expect(parseArgs([name, "./sessions/run.jsonl"])).toEqual({
       kind: name,
       path: "./sessions/run.jsonl",
+      json: false,
     });
   });
 
@@ -86,7 +86,18 @@ describe("parseArgs — verify and summary", () => {
     expect(parseArgs(["summary", "/var/log/blackbox"])).toEqual({
       kind: "summary",
       path: "/var/log/blackbox",
+      json: false,
     });
+  });
+
+  it.each(["verify", "summary"] as const)("accepts --json for %s", (name) => {
+    expect(parseArgs([name, "--json"])).toEqual({ kind: name, path: null, json: true });
+  });
+
+  it("accepts a path and --json in either order", () => {
+    const expected = { kind: "verify", path: "a.jsonl", json: true };
+    expect(parseArgs(["verify", "a.jsonl", "--json"])).toEqual(expected);
+    expect(parseArgs(["verify", "--json", "a.jsonl"])).toEqual(expected);
   });
 
   it("rejects more than one path", () => {
@@ -98,9 +109,9 @@ describe("parseArgs — verify and summary", () => {
   });
 
   it("rejects unknown options on a subcommand", () => {
-    expect(parseArgs(["verify", "--json"])).toMatchObject({
+    expect(parseArgs(["verify", "--csv"])).toMatchObject({
       kind: "error",
-      message: expect.stringContaining("--json"),
+      message: expect.stringContaining("--csv"),
     });
   });
 

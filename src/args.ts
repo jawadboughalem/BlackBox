@@ -5,18 +5,15 @@
  * touching the process, the filesystem or the current working directory.
  */
 
-/** Path used by `verify` / `summary` when the caller omits one. */
-export const DEFAULT_PATH = ".";
-
 export type ParsedArgs =
   | { kind: "help" }
   | { kind: "version" }
   /** `mcp-blackbox -- <command> [args...]` */
   | { kind: "proxy"; command: string; args: string[] }
-  /** `mcp-blackbox verify [path]` */
-  | { kind: "verify"; path: string }
-  /** `mcp-blackbox summary [path]` */
-  | { kind: "summary"; path: string }
+  /** `mcp-blackbox verify [path] [--json]` */
+  | { kind: "verify"; path: string | null; json: boolean }
+  /** `mcp-blackbox summary [path] [--json]` */
+  | { kind: "summary"; path: string | null; json: boolean }
   | { kind: "error"; message: string };
 
 const HELP_FLAGS = new Set(["-h", "--help", "help"]);
@@ -60,29 +57,44 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   return { kind: "error", message: `Unknown command: ${first}` };
 }
 
+/**
+ * Parses `verify` / `summary`: an optional path and an optional `--json`, in
+ * either order. The path stays null when omitted so the command can fall back
+ * to the default journal rather than guessing here.
+ */
 function parseSubcommandWithPath(
   kind: "verify" | "summary",
   rest: readonly string[],
 ): ParsedArgs {
-  const [path, ...extra] = rest;
+  let path: string | null = null;
+  let json = false;
 
-  if (path === "--") {
-    return {
-      kind: "error",
-      message: `\`--\` is only valid as the first argument, before a server command.`,
-    };
+  for (const argument of rest) {
+    if (argument === "--json") {
+      json = true;
+      continue;
+    }
+
+    if (argument === "--") {
+      return {
+        kind: "error",
+        message: "`--` is only valid as the first argument, before a server command.",
+      };
+    }
+
+    if (argument.startsWith("-")) {
+      return { kind: "error", message: `Unknown option for \`${kind}\`: ${argument}` };
+    }
+
+    if (path !== null) {
+      return {
+        kind: "error",
+        message: `\`${kind}\` accepts at most one path, got "${path}" and "${argument}"`,
+      };
+    }
+
+    path = argument;
   }
 
-  if (path !== undefined && path.startsWith("-")) {
-    return { kind: "error", message: `Unknown option for \`${kind}\`: ${path}` };
-  }
-
-  if (extra.length > 0) {
-    return {
-      kind: "error",
-      message: `\`${kind}\` accepts at most one path, got ${rest.length}: ${rest.join(" ")}`,
-    };
-  }
-
-  return { kind, path: path ?? DEFAULT_PATH };
+  return { kind, path, json };
 }

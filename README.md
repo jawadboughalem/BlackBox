@@ -116,13 +116,47 @@ written — read-only disk, missing permissions, a corrupt tail that would make
 the chain unverifiable — recording switches off silently and the proxy keeps
 serving traffic.
 
-`verify` and `summary` take an optional path and default to the current
-directory:
+## Reading the journal
+
+`verify` recomputes the whole chain and reports the first place it stops
+holding. `summary` aggregates the recorded calls. Both take an optional path —
+a journal file, or a directory containing one — and default to the journal this
+tool records into.
 
 ```bash
-mcp-blackbox verify ./session.jsonl
-mcp-blackbox summary
+$ mcp-blackbox verify
+OK — 14 entrées, chaîne intacte
+
+$ mcp-blackbox verify            # after someone edited entry 7
+ROMPUE à l'entrée 7 (seq 7) — hash recalculé différent : l'entrée a été modifiée
+  fichier : /home/you/.mcp-blackbox/journal.jsonl:7
+  6 entrées vérifiées avant la rupture
 ```
+
+An edit, a deletion, a reordering, a duplicated entry or a truncated line all
+break the chain, and `verify` exits 1. Re-hashing the edited entry does not
+help: the next entry's `prev_hash` still points at the original.
+
+```bash
+$ mcp-blackbox summary
+Période   2026-08-15T17:17:24.701Z → 2026-08-15T17:19:02.118Z
+Appels    14 (3 en échec, 21.4 %)
+Durée     médiane 57 ms · p95 59 ms
+
+Par outil
+  search          4
+  write_file      4
+  read_file       3
+  tool-error      3  3 en échec
+
+Par serveur
+  fake-mcp-server     14  3 en échec
+```
+
+Both accept `--json` for machine-readable output. Percentiles use nearest rank,
+so every figure reported is a duration that was actually observed. `summary`
+still reports what it can from a damaged journal — telling you the chain is
+broken is `verify`'s job.
 
 ## Development
 

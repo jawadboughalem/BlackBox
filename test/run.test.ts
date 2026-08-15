@@ -1,7 +1,7 @@
-import { isAbsolute, resolve } from "node:path";
+import { resolve } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { describe, expect, it } from "vitest";
-import { EXIT_USAGE, runCli, type CliContext } from "../src/run.js";
+import { EXIT_FAILED, EXIT_USAGE, runCli, type CliContext } from "../src/run.js";
 
 // Path expectations go through `resolve` rather than hard-coded literals: the
 // separator and the drive prefix differ between POSIX and Windows, and the
@@ -46,24 +46,16 @@ describe("runCli", () => {
     expect(h.stdout().trim()).toBe("9.9.9");
   });
 
-  it("resolves the verify path against the working directory", async () => {
-    const h = harness();
-    expect(await runCli(["verify", "sessions/a.jsonl"], h.context)).toBe(0);
-    expect(h.stdout()).toContain("mode: verify");
-    // The path is echoed as given, and separately resolved to an absolute one.
-    expect(h.stdout()).toContain("path: sessions/a.jsonl");
-    const resolved = resolve(CWD, "sessions/a.jsonl");
-    expect(isAbsolute(resolved)).toBe(true);
-    expect(h.stdout()).toContain(`resolved: ${resolved}`);
-  });
-
-  it("defaults the summary path to the working directory", async () => {
-    const h = harness();
-    expect(await runCli(["summary"], h.context)).toBe(0);
-    expect(h.stdout()).toContain("mode: summary");
-    expect(h.stdout()).toContain("path: .");
-    expect(h.stdout()).toContain(`resolved: ${CWD}`);
-  });
+  it.each(["verify", "summary"] as const)(
+    "reports a missing journal on stderr and exits 1 for %s",
+    async (command) => {
+      const h = harness();
+      const missing = resolve(CWD, "definitely-absent-journal.jsonl");
+      expect(await runCli([command, missing], h.context)).toBe(EXIT_FAILED);
+      expect(h.stderr()).toContain("aucun journal à");
+      expect(h.stdout()).toBe("");
+    },
+  );
 
   it("writes usage errors to stderr and exits non-zero", async () => {
     const h = harness();
