@@ -123,16 +123,33 @@ describe.skipIf(!existsSync(CLI))("proxy mode", () => {
     expect(stdout).toHaveLength(0);
   });
 
+  const MISSING = "definitely-not-a-real-command-xyz";
+
   it("reports a command that cannot be run, on stderr only", async () => {
-    const { stdout, stderr, code } = await run([
-      CLI,
-      "--",
-      "definitely-not-a-real-command-xyz",
-    ]);
+    const { stdout, stderr, code } = await run([CLI, "--", MISSING]);
     expect(stdout).toHaveLength(0);
-    expect(stderr).toContain("mcp-blackbox:");
-    expect(code).toBe(127);
+    expect(stderr.trim()).not.toBe("");
+    expect(code).not.toBe(0);
   });
+
+  // On Windows the command goes through cmd.exe, which reports the failure
+  // itself and returns its own exit code, so only the invariants above hold.
+  it.skipIf(process.platform === "win32")(
+    "uses the conventional not-found exit code",
+    async () => {
+      const { stderr, code } = await run([CLI, "--", MISSING]);
+      expect(stderr).toContain("mcp-blackbox:");
+      expect(code).toBe(127);
+    },
+  );
+
+  // Exercises the Windows shell path end to end: `npm` is a .cmd shim there,
+  // the same shape as the `npx` invocation a real MCP server is launched with.
+  it("relays a command that is a shell shim on Windows", async () => {
+    const { stdout, code } = await run([CLI, "--", "npm", "--version"]);
+    expect(stdout.toString().trim()).toMatch(/^\d+\.\d+\.\d+/);
+    expect(code).toBe(0);
+  }, 30_000);
 });
 
 // Windows has no real signals: `kill` there terminates the process outright,
