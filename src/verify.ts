@@ -32,10 +32,11 @@ export type VerifyResult = VerifyOk | VerifyBroken;
  * hash matches a fresh computation. Verification stops at the first break —
  * every later entry is unverifiable anyway, since the chain no longer anchors.
  */
-export function verifyChain(lines: readonly JournalLine[], path: string): VerifyResult {
+export function verifyChain(lines: Iterable<JournalLine>, path: string): VerifyResult {
   let previous = GENESIS_HASH;
+  let offset = 0;
 
-  for (const [offset, line] of lines.entries()) {
+  for (const line of lines) {
     const index = offset + 1;
 
     if (line.entry === null) {
@@ -80,9 +81,10 @@ export function verifyChain(lines: readonly JournalLine[], path: string): Verify
     }
 
     previous = hash;
+    offset += 1;
   }
 
-  return { ok: true, path, entries: lines.length };
+  return { ok: true, path, entries: offset };
 }
 
 /** Outcome of checking every journal the user pointed at. */
@@ -102,19 +104,21 @@ export interface JournalsVerified {
  * others unverifiable.
  */
 export function verifyJournals(
-  journals: ReadonlyArray<{ path: string; lines: readonly JournalLine[] }>,
+  journals: Iterable<{ path: string; lines: Iterable<JournalLine> }>,
 ): JournalsVerified {
   let entries = 0;
+  let files = 0;
 
   for (const journal of journals) {
+    files += 1;
     const result = verifyChain(journal.lines, journal.path);
     if (!result.ok) {
-      return { ok: false, files: journals.length, entries: entries + result.verified, broken: result };
+      return { ok: false, files, entries: entries + result.verified, broken: result };
     }
     entries += result.entries;
   }
 
-  return { ok: true, files: journals.length, entries, broken: null };
+  return { ok: true, files, entries, broken: null };
 }
 
 /** Renders the result the way the CLI prints it. */

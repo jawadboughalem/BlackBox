@@ -2,7 +2,7 @@ import { parseArgs, type ParsedArgs } from "./args.js";
 import { loadConfig } from "./config.js";
 import { HELP_TEXT } from "./help.js";
 import { Journal } from "./journal.js";
-import { readJournalLines, resolveJournalTargets, type JournalLine } from "./journal-reader.js";
+import { iterateJournalLines, resolveJournalTargets, type JournalLine } from "./journal-reader.js";
 import { runProxy } from "./proxy.js";
 import { CallRecorder } from "./recorder.js";
 import { formatSummary, summarise } from "./summary.js";
@@ -74,6 +74,7 @@ async function dispatch(parsed: ParsedArgs, context: CliContext): Promise<number
       }
       const recorder = new CallRecorder(journal, invocation, {
         redaction: config.redaction,
+        onProblem: (message) => err(`mcp-blackbox: ${message}`),
       });
       try {
         return await runProxy(
@@ -87,36 +88,32 @@ async function dispatch(parsed: ParsedArgs, context: CliContext): Promise<number
       }
     }
 
-    case "verify": {
-      let journals;
+    // Journals are read lazily, so a file that turns out to be missing throws
+    // while it is being consumed, not when it is listed: both commands keep
+    // their guard around the whole read.
+    case "verify":
       try {
-        journals = readTargets(parsed.path);
+        const targets = resolveJournalTargets(parsed.path);
+        const result = verifyJournals(
+          targets.map((path) => ({ path, lines: iterateJournalLines(path) })),
+        );
+        out(parsed.json ? JSON.stringify(result, null, 2) : formatVerify(result));
+        return result.ok ? 0 : EXIT_FAILED;
       } catch (error) {
         err(`error: ${describe(error)}`);
         return EXIT_FAILED;
       }
 
-      const result = verifyJournals(journals);
-      out(parsed.json ? JSON.stringify(result, null, 2) : formatVerify(result));
-      return result.ok ? 0 : EXIT_FAILED;
-    }
-
-    case "summary": {
-      let journals;
+    case "summary":
       try {
-        journals = readTargets(parsed.path);
+        const targets = resolveJournalTargets(parsed.path);
+        const result = summarise(everyLine(targets), targets);
+        out(parsed.json ? JSON.stringify(result, null, 2) : formatSummary(result));
+        return 0;
       } catch (error) {
         err(`error: ${describe(error)}`);
         return EXIT_FAILED;
       }
-
-      const result = summarise(
-        journals.flatMap((journal) => journal.lines),
-        journals.map((journal) => journal.path),
-      );
-      out(parsed.json ? JSON.stringify(result, null, 2) : formatSummary(result));
-      return 0;
-    }
 
     case "error":
       err(`error: ${parsed.message}`);
@@ -126,12 +123,9 @@ async function dispatch(parsed: ParsedArgs, context: CliContext): Promise<number
   }
 }
 
-/** Loads every journal the path argument resolves to. */
-function readTargets(path: string | null): Array<{ path: string; lines: JournalLine[] }> {
-  return resolveJournalTargets(path).map((target) => ({
-    path: target,
-    lines: readJournalLines(target),
-  }));
+/** Every line of every journal, one file at a time. */
+function* everyLine(paths: readonly string[]): Generator<JournalLine> {
+  for (const path of paths) yield* iterateJournalLines(path);
 }
 
 function describe(error: unknown): string {

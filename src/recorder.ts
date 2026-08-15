@@ -29,6 +29,12 @@ export interface RecorderOptions {
   redaction?: RedactionConfig;
   /** Injectable clock, so duration is testable. */
   now?: () => number;
+  /**
+   * Called when a call could not be recorded. A journal that quietly loses
+   * entries is worse than one that says so: `verify` cannot detect a call that
+   * was never written, so the only chance to report it is here.
+   */
+  onProblem?: (message: string) => void;
 }
 
 export class CallRecorder {
@@ -36,6 +42,7 @@ export class CallRecorder {
   readonly #fallbackServer: string;
   readonly #pending = new Map<string, PendingCall>();
   readonly #redaction: RedactionConfig;
+  readonly #onProblem: (message: string) => void;
   #initializeId: string | null = null;
   #serverName: string | null = null;
   #now: () => number;
@@ -45,6 +52,7 @@ export class CallRecorder {
     this.#fallbackServer = fallbackServer;
     this.#redaction = options.redaction ?? defaultConfig();
     this.#now = options.now ?? (() => performance.now());
+    this.#onProblem = options.onProblem ?? (() => {});
   }
 
   /** Number of calls awaiting a response; exposed for tests. */
@@ -101,19 +109,25 @@ export class CallRecorder {
 
     const { outcome, errorMessage, payload } = interpret(message);
 
-    this.#journal.record({
-      ts: new Date().toISOString(),
-      server: this.#serverName ?? this.#fallbackServer,
-      tool: call.tool,
-      args_redacted: redact(call.args, this.#redaction),
-      // Deliberately the original arguments, not the redacted copy: the hash
-      // has to identify what was really sent.
-      args_hash: hashValue(call.args ?? null),
-      outcome,
-      error_message: errorMessage,
-      duration_ms: Math.round(this.#now() - call.startedAt),
-      result_hash: hashValue(payload ?? null),
-    });
+    try {
+      this.#journal.record({
+        ts: new Date().toISOString(),
+        server: this.#serverName ?? this.#fallbackServer,
+        tool: call.tool,
+        args_redacted: redact(call.args, this.#redaction),
+        // Deliberately the original arguments, not the redacted copy: the hash
+        // has to identify what was really sent.
+        args_hash: hashValue(call.args ?? null),
+        outcome,
+        error_message: errorMessage,
+        duration_ms: Math.round(this.#now() - call.startedAt),
+        result_hash: hashValue(payload ?? null),
+      });
+    } catch (error) {
+      // The relay carries on regardless; this only makes the gap visible.
+      const reason = error instanceof Error ? error.message : String(error);
+      this.#onProblem(`could not record a call to "${call.tool}": ${reason}`);
+    }
   }
 }
 

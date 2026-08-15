@@ -13,6 +13,64 @@ export const GENESIS_HASH = `sha256:${"0".repeat(64)}`;
  * undefined object properties are dropped the same way it drops them.
  */
 export function canonicalJson(value: unknown): string {
+  // Walked with an explicit stack rather than recursion. `JSON.parse` accepts
+  // structures thousands of levels deep, so a recursive walk would overflow on
+  // input the platform itself handled — and a value we cannot hash is a call
+  // we cannot record. The output is unchanged either way.
+  const out: string[] = [];
+  const stack: Frame[] = [{ kind: "value", value }];
+
+  while (stack.length > 0) {
+    const frame = stack.pop()!;
+
+    if (frame.kind === "text") {
+      out.push(frame.text);
+      continue;
+    }
+
+    const current = frame.value;
+    if (!isContainer(current)) {
+      out.push(scalarJson(current));
+      continue;
+    }
+
+    if (Array.isArray(current)) {
+      out.push("[");
+      stack.push({ kind: "text", text: "]" });
+      // Pushed in reverse so they pop back in order.
+      for (let index = current.length - 1; index >= 0; index -= 1) {
+        stack.push({ kind: "value", value: current[index] });
+        if (index > 0) stack.push({ kind: "text", text: "," });
+      }
+      continue;
+    }
+
+    const source = current as Record<string, unknown>;
+    const keys = Object.keys(source)
+      .sort()
+      .filter((key) => source[key] !== undefined);
+
+    out.push("{");
+    stack.push({ kind: "text", text: "}" });
+    for (let index = keys.length - 1; index >= 0; index -= 1) {
+      const key = keys[index]!;
+      stack.push({ kind: "value", value: source[key] });
+      stack.push({ kind: "text", text: `${JSON.stringify(key)}:` });
+      if (index > 0) stack.push({ kind: "text", text: "," });
+    }
+  }
+
+  return out.join("");
+}
+
+type Frame = { kind: "value"; value: unknown } | { kind: "text"; text: string };
+
+function isContainer(value: unknown): boolean {
+  return value !== null && typeof value === "object";
+}
+
+/** Serialises anything that is not an array or object. */
+function scalarJson(value: unknown): string {
   if (value === null || value === undefined) return "null";
 
   switch (typeof value) {
@@ -23,25 +81,10 @@ export function canonicalJson(value: unknown): string {
       return Number.isFinite(value) ? JSON.stringify(value) : "null";
     case "bigint":
       return JSON.stringify(value.toString());
-    case "object":
-      break;
     default:
       // Functions and symbols have no JSON form.
       return "null";
   }
-
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalJson).join(",")}]`;
-  }
-
-  const source = value as Record<string, unknown>;
-  const fields: string[] = [];
-  for (const key of Object.keys(source).sort()) {
-    const entry = source[key];
-    if (entry === undefined) continue;
-    fields.push(`${JSON.stringify(key)}:${canonicalJson(entry)}`);
-  }
-  return `{${fields.join(",")}}`;
 }
 
 /** SHA-256 of a string, prefixed with the algorithm that produced it. */

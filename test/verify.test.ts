@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { GENESIS_HASH } from "../src/canonical-json.js";
 import { Journal, type JournalEntry } from "../src/journal.js";
-import { readJournalLines, resolveJournalTargets } from "../src/journal-reader.js";
+import {
+  iterateJournalLines,
+  readJournalLines,
+  resolveJournalTargets,
+} from "../src/journal-reader.js";
 import { formatVerify, verifyChain, verifyJournals } from "../src/verify.js";
 
 /** Builds a genuine journal of `count` entries, then hands back its lines. */
@@ -251,5 +255,55 @@ describe("verifyChain — tampered journals", () => {
   it("keeps the genesis hash as the anchor", () => {
     const { path } = buildJournal(1);
     expect(entriesOf(path)[0]!.prev_hash).toBe(GENESIS_HASH);
+  });
+});
+
+describe("iterateJournalLines", () => {
+  it("yields the same lines as reading the file whole", () => {
+    const { path } = buildJournal(20);
+    expect([...iterateJournalLines(path)]).toEqual(readJournalLines(path));
+  });
+
+  it("numbers lines from 1, counting blanks", () => {
+    const { path } = buildJournal(2);
+    const entries = entriesOf(path);
+    writeFileSync(path, `${JSON.stringify(entries[0])}\n\n${JSON.stringify(entries[1])}\n`);
+    expect([...iterateJournalLines(path)].map((line) => line.line)).toEqual([1, 3]);
+  });
+
+  it("reassembles entries split across read boundaries", () => {
+    // Entries far larger than the 64 KiB read size, so lines certainly span
+    // several chunks.
+    const dir = mkdtempSync(join(tmpdir(), "blackbox-verify-"));
+    const journal = Journal.openAt(join(dir, "journal.jsonl"));
+    for (let index = 0; index < 5; index += 1) {
+      journal.record({
+        ts: "2026-01-01T00:00:00.000Z",
+        server: "s",
+        tool: "big",
+        args_redacted: { blob: "x".repeat(100_000) },
+        args_hash: `sha256:${"a".repeat(64)}`,
+        outcome: "ok",
+        error_message: null,
+        duration_ms: 1,
+        result_hash: `sha256:${"b".repeat(64)}`,
+      });
+    }
+    journal.close();
+
+    const path = join(dir, "journal.jsonl");
+    expect(verify(path)).toEqual({ ok: true, path, entries: 5 });
+  });
+
+  it("closes the file even when the consumer stops early", () => {
+    const { path } = buildJournal(50);
+    // Many partial reads would exhaust the descriptor table if the generator
+    // leaked one each time.
+    for (let index = 0; index < 500; index += 1) {
+      const iterator = iterateJournalLines(path);
+      iterator.next();
+      iterator.return(undefined);
+    }
+    expect(verify(path).ok).toBe(true);
   });
 });

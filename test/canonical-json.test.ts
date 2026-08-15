@@ -69,3 +69,31 @@ describe("hashing", () => {
     expect(GENESIS_HASH).toBe(`sha256:${"0".repeat(64)}`);
   });
 });
+
+describe("deeply nested values", () => {
+  const nest = (depth: number) => {
+    let value: unknown = 1;
+    for (let index = 0; index < depth; index += 1) value = { n: value };
+    return value;
+  };
+
+  // JSON.parse accepts structures thousands of levels deep, so a recursive
+  // serialiser would overflow on input the platform itself handled — and a
+  // value that cannot be hashed is a call that cannot be recorded.
+  it.each([1_000, 10_000, 100_000])("serialises %i levels without overflowing", (depth) => {
+    expect(() => canonicalJson(nest(depth))).not.toThrow();
+  });
+
+  it("hashes deep values", () => {
+    expect(hashValue(nest(50_000))).toMatch(/^sha256:[0-9a-f]{64}$/);
+  });
+
+  it("serialises a long array without overflowing", () => {
+    const wide = Array.from({ length: 200_000 }, (_unused, index) => index);
+    expect(canonicalJson(wide)).toBe(JSON.stringify(wide));
+  });
+
+  it("still matches JSON.stringify for a nested value", () => {
+    expect(canonicalJson(nest(200))).toBe(JSON.stringify(nest(200)));
+  });
+});

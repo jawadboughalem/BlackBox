@@ -1,5 +1,4 @@
 import { dirname } from "node:path";
-import type { JournalEntry } from "./journal.js";
 import type { JournalLine } from "./journal-reader.js";
 
 export interface GroupStats {
@@ -27,25 +26,46 @@ export interface Summary {
  * Aggregates one or more journals. Unreadable lines are skipped, not fatal:
  * reporting that a chain is damaged is `verify`'s job.
  */
-export function summarise(lines: readonly JournalLine[], files: string[]): Summary {
-  const entries = lines
-    .map((line) => line.entry)
-    .filter((entry): entry is JournalEntry => entry !== null);
+export function summarise(lines: Iterable<JournalLine>, files: string[]): Summary {
+  // Accumulated in one pass rather than from a materialised list: only the
+  // durations are kept, since percentiles need them all.
+  const durations: number[] = [];
+  const byTool = new Map<string, GroupStats>();
+  const byServer = new Map<string, GroupStats>();
+  let calls = 0;
+  let skipped = 0;
+  let failures = 0;
+  let from: string | null = null;
+  let to: string | null = null;
 
-  const failures = entries.filter((entry) => entry.outcome === "error").length;
-  const timestamps = entries.map((entry) => entry.ts).sort();
-  const durations = entries.map((entry) => entry.duration_ms).sort((a, b) => a - b);
+  for (const line of lines) {
+    const entry = line.entry;
+    if (entry === null) {
+      skipped += 1;
+      continue;
+    }
+
+    calls += 1;
+    durations.push(entry.duration_ms);
+    if (entry.outcome === "error") failures += 1;
+    if (from === null || entry.ts < from) from = entry.ts;
+    if (to === null || entry.ts > to) to = entry.ts;
+    count(byTool, entry.tool, entry.outcome);
+    count(byServer, entry.server, entry.outcome);
+  }
+
+  durations.sort((a, b) => a - b);
 
   return {
     files,
-    calls: entries.length,
-    skipped: lines.length - entries.length,
-    period: { from: timestamps.at(0) ?? null, to: timestamps.at(-1) ?? null },
+    calls,
+    skipped,
+    period: { from, to },
     failures,
-    failure_rate: entries.length === 0 ? 0 : failures / entries.length,
+    failure_rate: calls === 0 ? 0 : failures / calls,
     duration_ms: { median: percentile(durations, 0.5), p95: percentile(durations, 0.95) },
-    by_tool: group(entries, (entry) => entry.tool),
-    by_server: group(entries, (entry) => entry.server),
+    by_tool: ranked(byTool),
+    by_server: ranked(byServer),
   };
 }
 
@@ -61,21 +81,16 @@ export function percentile(sorted: readonly number[], share: number): number {
   return sorted[index] ?? 0;
 }
 
-/** Counts calls and failures per key, busiest first. */
-function group(entries: readonly JournalEntry[], key: (entry: JournalEntry) => string): GroupStats[] {
-  const totals = new Map<string, GroupStats>();
+function count(totals: Map<string, GroupStats>, name: string, outcome: "ok" | "error"): void {
+  const stats = totals.get(name) ?? { name, calls: 0, failures: 0 };
+  stats.calls += 1;
+  if (outcome === "error") stats.failures += 1;
+  totals.set(name, stats);
+}
 
-  for (const entry of entries) {
-    const name = key(entry);
-    const stats = totals.get(name) ?? { name, calls: 0, failures: 0 };
-    stats.calls += 1;
-    if (entry.outcome === "error") stats.failures += 1;
-    totals.set(name, stats);
-  }
-
-  return [...totals.values()].sort(
-    (a, b) => b.calls - a.calls || a.name.localeCompare(b.name),
-  );
+/** Busiest first, ties broken on name so the output is stable. */
+function ranked(totals: Map<string, GroupStats>): GroupStats[] {
+  return [...totals.values()].sort((a, b) => b.calls - a.calls || a.name.localeCompare(b.name));
 }
 
 /** Renders the summary the way the CLI prints it. */

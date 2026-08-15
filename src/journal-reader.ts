@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { closeSync, existsSync, openSync, readSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { JOURNAL_PATTERN, journalDir, type JournalEntry } from "./journal.js";
+import { LineSplitter } from "./line-splitter.js";
 
 /** One physical line of the journal, parsed if it could be. */
 export interface JournalLine {
@@ -56,37 +57,73 @@ export function resolveJournalTargets(
   return found;
 }
 
+/** Bytes pulled from the journal per read. */
+const CHUNK = 64 * 1024;
+
 /**
- * Reads every line of the journal, keeping unparseable ones rather than
+ * Yields every line of the journal, keeping unparseable ones rather than
  * dropping them — a corrupt line is exactly what `verify` needs to report.
  * Blank lines are skipped: they carry no entry and break nothing.
+ *
+ * Read in chunks rather than all at once, so memory tracks the longest line
+ * instead of the file. Journals are append-only and never truncated, so a
+ * long-running setup can accumulate far more than is comfortable to hold.
+ * The file descriptor is closed even if the consumer stops early, which
+ * `verify` does at the first break.
  */
-export function readJournalLines(path: string): JournalLine[] {
+export function* iterateJournalLines(path: string): Generator<JournalLine> {
   if (!existsSync(path)) throw new JournalNotFoundError(path);
 
-  const contents = readFileSync(path, "utf8");
-  const lines: JournalLine[] = [];
+  const fd = openSync(path, "r");
+  try {
+    const splitter = new LineSplitter();
+    const buffer = Buffer.allocUnsafe(CHUNK);
+    let lineNumber = 0;
 
-  contents.split("\n").forEach((raw, index) => {
-    if (raw.trim() === "") return;
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      lines.push({ line: index + 1, entry: null, problem: "not valid JSON" });
-      return;
+    for (;;) {
+      const read = readSync(fd, buffer, 0, CHUNK, null);
+      if (read === 0) break;
+      for (const line of splitter.push(Buffer.from(buffer.subarray(0, read)))) {
+        lineNumber += 1;
+        const parsed = interpretLine(line, lineNumber);
+        if (parsed !== null) yield parsed;
+      }
     }
 
-    const problem = describeShape(parsed);
-    lines.push({
-      line: index + 1,
-      entry: problem === null ? (parsed as JournalEntry) : null,
-      problem,
-    });
-  });
+    const rest = splitter.flush();
+    if (rest !== null) {
+      lineNumber += 1;
+      const parsed = interpretLine(rest, lineNumber);
+      if (parsed !== null) yield parsed;
+    }
+  } finally {
+    closeSync(fd);
+  }
+}
 
-  return lines;
+/** Collects every line into an array. Convenient, but holds the whole file. */
+export function readJournalLines(path: string): JournalLine[] {
+  return [...iterateJournalLines(path)];
+}
+
+/** Turns one raw line into a JournalLine, or null when it is blank. */
+function interpretLine(raw: Buffer, lineNumber: number): JournalLine | null {
+  const text = raw.toString("utf8");
+  if (text.trim() === "") return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { line: lineNumber, entry: null, problem: "not valid JSON" };
+  }
+
+  const problem = describeShape(parsed);
+  return {
+    line: lineNumber,
+    entry: problem === null ? (parsed as JournalEntry) : null,
+    problem,
+  };
 }
 
 const REQUIRED: ReadonlyArray<[keyof JournalEntry, string]> = [

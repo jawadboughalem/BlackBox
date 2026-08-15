@@ -19,6 +19,7 @@ import {
   type EntryInput,
   type JournalEntry,
 } from "../src/journal.js";
+import { CallRecorder } from "../src/recorder.js";
 
 const opened: Journal[] = [];
 
@@ -335,5 +336,49 @@ describe("Journal", () => {
     expect(journal.enabled).toBe(false);
     expect(journal.record(entry())).toBeNull();
     expect(readEntries(dir)).toHaveLength(1);
+  });
+});
+
+describe("recording failures are never silent", () => {
+  it("reports a call it could not record", () => {
+    const problems: string[] = [];
+    const journal = Journal.disabled();
+    // A journal that throws rather than returning null, to reach the guard.
+    const exploding = {
+      record() {
+        throw new Error("disk gave up");
+      },
+    } as unknown as Journal;
+    void journal;
+
+    const recorder = new CallRecorder(exploding, "cmd", {
+      onProblem: (message) => problems.push(message),
+    });
+    recorder.observeRequest(
+      Buffer.from(
+        `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "t" } })}\n`,
+      ),
+    );
+    recorder.observeResponse(Buffer.from(`${JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} })}\n`));
+
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('could not record a call to "t"');
+    expect(problems[0]).toContain("disk gave up");
+  });
+
+  it("says nothing when recording works", () => {
+    const problems: string[] = [];
+    const dir = tempDir();
+    const journal = openIn(dir);
+    const recorder = new CallRecorder(journal, "cmd", {
+      onProblem: (message) => problems.push(message),
+    });
+    recorder.observeRequest(
+      Buffer.from(
+        `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "t" } })}\n`,
+      ),
+    );
+    recorder.observeResponse(Buffer.from(`${JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} })}\n`));
+    expect(problems).toEqual([]);
   });
 });

@@ -126,7 +126,14 @@ Recording never interferes with relaying. If the journal cannot be opened or
 written — read-only disk, missing permissions, a corrupt tail that would make
 the chain unverifiable — recording switches off and the proxy keeps serving
 traffic. The server your client depends on does not fail because a log file
-could not be written.
+could not be written. When a call cannot be recorded the reason goes to stderr:
+`verify` cannot detect a call that was never written, so a silent gap would be
+undetectable afterwards.
+
+Journals accumulate; nothing prunes them. Each file is an independent chain, so
+old ones can be deleted or archived freely without affecting verification of
+the rest. `verify` and `summary` read files in chunks rather than whole, so a
+journal larger than memory is still usable.
 
 ## What this does not do
 

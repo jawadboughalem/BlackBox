@@ -2,6 +2,7 @@ export { parseArgs, type ParsedArgs } from "./args.js";
 export { runCli, defaultContext, EXIT_USAGE, EXIT_FAILED, type CliContext } from "./run.js";
 export {
   readJournalLines,
+  iterateJournalLines,
   resolveJournalTargets,
   JournalNotFoundError,
   type JournalLine,
